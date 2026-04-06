@@ -1,0 +1,43 @@
+{
+  "name": "meridian-next",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous DLMM LP agent for Meteora on Solana — Next.js + Bun",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "bun server.ts",
+    "postinstall": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "bun prisma/seed.ts"
+  },
+  "dependencies": {
+    "@meteora-ag/dlmm": "latest",
+    "@prisma/client": "^6.4.1",
+    "@solana/spl-token": "^0.3.11",
+    "@solana/web3.js": "^1.95.0",
+    "bn.js": "^5.2.1",
+    "bs58": "^5.0.0",
+    "next": "^15.2.0",
+    "node-cron": "^3.0.3",
+    "openai": "^4.73.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.6",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "prisma": "^6.4.1",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/postcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
