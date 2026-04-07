@@ -106,9 +106,12 @@ const DEFAULT_CONFIG: MeridianConfig = {
     temperature: 0.373,
     maxTokens: 4096,
     maxSteps: 20,
-    managementModel: process.env.LLM_MODEL ?? "openrouter/healer-alpha",
-    screeningModel: process.env.LLM_MODEL ?? "openrouter/hunter-alpha",
-    generalModel: process.env.LLM_MODEL ?? "openrouter/healer-alpha",
+    managementModel:
+      process.env.OLLAMA_MODEL ?? process.env.LLM_MODEL ?? "gpt-oss:120b",
+    screeningModel:
+      process.env.OLLAMA_MODEL ?? process.env.LLM_MODEL ?? "gpt-oss:120b",
+    generalModel:
+      process.env.OLLAMA_MODEL ?? process.env.LLM_MODEL ?? "gpt-oss:120b",
   },
   tokens: {
     SOL: "So11111111111111111111111111111111111111112",
@@ -119,6 +122,16 @@ const DEFAULT_CONFIG: MeridianConfig = {
 
 // In-memory config, loaded from DB at startup
 export let config: MeridianConfig = structuredClone(DEFAULT_CONFIG);
+
+export async function getSecret(key: string): Promise<string | undefined> {
+  try {
+    const secret = await prisma.secret.findUnique({ where: { key } });
+    return secret?.value;
+  } catch (e) {
+    log("config_error", `Failed to fetch secret ${key}: ${e}`);
+    return process.env[key]; // Fallback to .env if DB fails
+  }
+}
 
 export async function loadConfig(): Promise<MeridianConfig> {
   try {
@@ -166,7 +179,14 @@ function deepMerge(target: unknown, source: unknown): unknown {
   for (const key of Object.keys(source as Record<string, unknown>)) {
     const sv = (source as Record<string, unknown>)[key];
     const tv = result[key];
-    if (sv && typeof sv === "object" && !Array.isArray(sv) && tv && typeof tv === "object" && !Array.isArray(tv)) {
+    if (
+      sv &&
+      typeof sv === "object" &&
+      !Array.isArray(sv) &&
+      tv &&
+      typeof tv === "object" &&
+      !Array.isArray(tv)
+    ) {
       result[key] = deepMerge(tv, sv);
     } else if (sv !== undefined) {
       result[key] = sv;

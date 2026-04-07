@@ -98,34 +98,33 @@ model Lesson {
 // ─── Pool Memory ────────────────────────────────────────────────
 
 model PoolMemory {
-  poolAddress    String   @id @map("pool_address")
-  name           String?
-  baseMint       String?  @map("base_mint")
-  deploys        Json     @default("[]")
-  totalDeploys   Int      @default(0) @map("total_deploys")
-  avgPnlPct      Float    @default(0) @map("avg_pnl_pct")
-  winRate        Float    @default(0) @map("win_rate")
-  lastDeployedAt DateTime? @map("last_deployed_at")
-  lastOutcome    String?  @map("last_outcome")
-  notes          Json     @default("[]")
-  snapshots      Json     @default("[]")
+  id        Int      @id @default(autoincrement())
+  pool      String
+  snapshot Json?
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@map("pool_memory")
 }
 
-// ─── Strategy Library ───────────────────────────────────────────
+// ─── Global Configuration ──────────────────────────────────────
 
-model Strategy {
-  id          String   @id
-  name        String
-  author      String   @default("unknown")
-  lpStrategy  String   @map("lp_strategy")
-  data        Json     // full strategy object
-  active      Boolean  @default(false)
-  addedAt     DateTime @default(now()) @map("added_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+model Config {
+  id        Int      @id @default(1)
+  data      Json     @default("{}")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("strategies")
+  @@map("config")
+}
+
+// ─── API Keys & Secrets ──────────────────────────────────────────
+
+model Secret {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g., "OPENROUTER_API_KEY", "RPC_URL"
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("secrets")
 }
 
 // ─── Smart Wallets ──────────────────────────────────────────────
@@ -151,23 +150,4 @@ model TokenBlacklist {
   addedBy String   @default("agent") @map("added_by")
 
   @@map("token_blacklist")
-}
-
-// ─── Config (single-row) ────────────────────────────────────────
-
-model Config {
-  id        Int      @id @default(1)
-  data      Json
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@map("config")
-}
-
-// ─── Briefing Tracking ──────────────────────────────────────────
-
-model AppState {
-  key   String @id
-  value String
-
-  @@map("app_state")
 }

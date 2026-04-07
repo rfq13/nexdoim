@@ -1,20 +1,25 @@
 import { Connection, PublicKey, VersionedTransaction, Keypair } from "@solana/web3.js";
 import bs58 from "bs58";
 import { log } from "../logger";
-import { config } from "../config";
+import { config, getSecret } from "../config";
 
 let _connection: Connection | null = null;
 let _wallet: Keypair | null = null;
 
-function getConnection() {
-  if (!_connection) _connection = new Connection(process.env.RPC_URL!, "confirmed");
+async function getConnection() {
+  if (!_connection) {
+    const rpcUrl = await getSecret("RPC_URL") || process.env.RPC_URL;
+    if (!rpcUrl) throw new Error("RPC_URL not set");
+    _connection = new Connection(rpcUrl, "confirmed");
+  }
   return _connection;
 }
 
-function getWallet() {
+async function getWallet() {
   if (!_wallet) {
-    if (!process.env.WALLET_PRIVATE_KEY) throw new Error("WALLET_PRIVATE_KEY not set");
-    _wallet = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY));
+    const pk = await getSecret("WALLET_PRIVATE_KEY") || process.env.WALLET_PRIVATE_KEY;
+    if (!pk) throw new Error("WALLET_PRIVATE_KEY not set");
+    _wallet = Keypair.fromSecretKey(bs58.decode(pk));
   }
   return _wallet;
 }
@@ -24,21 +29,17 @@ const JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1";
 const JUPITER_API_KEY = "b15d42e9-e0e4-4f90-a424-ae41ceeaa382";
 
 export function normalizeMint(mint: string | undefined | null): string {
-  if (!mint) return mint as string;
-  const SOL_MINT = "So11111111111111111111111111111111111111112";
-  if (mint === "SOL" || mint === "native" || /^So1+$/.test(mint) || (mint.length >= 32 && mint.length <= 44 && mint.startsWith("So1") && mint !== SOL_MINT)) {
-    return SOL_MINT;
-  }
-  return mint;
-}
-
+// ...existing code...
 export async function getWalletBalances() {
   let walletAddress: string;
-  try { walletAddress = getWallet().publicKey.toString(); } catch {
+  try { 
+    const wallet = await getWallet();
+    walletAddress = wallet.publicKey.toString(); 
+  } catch {
     return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Wallet not configured" };
   }
 
-  const HELIUS_KEY = process.env.HELIUS_API_KEY;
+  const HELIUS_KEY = await getSecret("HELIUS_API_KEY") || process.env.HELIUS_API_KEY;
   if (!HELIUS_KEY) {
     return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Helius API key missing" };
   }
@@ -75,13 +76,14 @@ export async function swapToken({ input_mint, output_mint, amount }: { input_min
   input_mint = normalizeMint(input_mint);
   output_mint = normalizeMint(output_mint);
 
-  if (process.env.DRY_RUN === "true") {
+  const dryRun = await getSecret("DRY_RUN") || process.env.DRY_RUN;
+  if (dryRun === "true") {
     return { dry_run: true, would_swap: { input_mint, output_mint, amount }, message: "DRY RUN" };
   }
 
   try {
-    const wallet = getWallet();
-    const connection = getConnection();
+    const wallet = await getWallet();
+    const connection = await getConnection();
 
     let decimals = 9;
     if (input_mint !== config.tokens.SOL) {
