@@ -29,7 +29,11 @@ const JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1";
 const JUPITER_API_KEY = "b15d42e9-e0e4-4f90-a424-ae41ceeaa382";
 
 export function normalizeMint(mint: string | undefined | null): string {
-// ...existing code...
+  if (!mint) return "";
+  const aliases: Record<string, string> = { SOL: config.tokens.SOL, USDC: config.tokens.USDC, USDT: config.tokens.USDT };
+  return aliases[mint.toUpperCase()] || mint.trim();
+}
+
 export async function getWalletBalances() {
   let walletAddress: string;
   try { 

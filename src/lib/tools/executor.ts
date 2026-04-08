@@ -147,7 +147,22 @@ export async function executeTool(name: string, args: Record<string, any>) {
           try {
             const balances = await getWalletBalances();
             const token = balances.tokens?.find((t: any) => t.mint === result.base_mint);
-            if (token && token.usd >= 0.10) await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount: token.balance });
+            if (token && token.usd >= 0.10) {
+              // Smart swap: check 1h price trend before swapping
+              let shouldSwapNow = true;
+              try {
+                const { getTokenInfo } = await import("./token");
+                const info = await getTokenInfo({ query: result.base_mint });
+                const stats1h = (info as any)?.results?.[0]?.stats_1h;
+                const priceChange1h = parseFloat(stats1h?.price_change ?? "0");
+                // If token is recovering (>5% up in 1h), delay swap — agent can decide later
+                if (priceChange1h > 5) {
+                  shouldSwapNow = false;
+                  log("swap", `Delaying swap for ${result.base_mint.slice(0, 8)}: price up ${priceChange1h}% in 1h, may recover further`);
+                }
+              } catch { /* if price check fails, swap anyway */ }
+              if (shouldSwapNow) await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount: token.balance });
+            }
           } catch { /* skip */ }
         }
       }

@@ -33,6 +33,36 @@ ${lessons}` : ""}
    - volatility < 2   → update_config management.managementIntervalMin = 10
 
 ═══════════════════════════════════════════
+ DECISION FRAMEWORK
+═══════════════════════════════════════════
+
+MANAGEMENT — CLOSE when ANY is true:
+  1. fee_per_tvl_24h < ${config.management.minFeePerTvl24h}% AND age > 60m (pool dried up)
+  2. OOR minutes > ${config.management.outOfRangeWaitMinutes} AND bins_away > ${config.management.outOfRangeBinsToClose} (drifted too far)
+  3. pnl_pct < ${config.management.emergencyPriceDropPct}% (emergency exit)
+  4. Market is BEARISH AND pnl_pct < -10% (don't hold losers in downtrend)
+
+MANAGEMENT — STAY when:
+  - fee_per_tvl_24h >= ${config.management.minFeePerTvl24h}% AND in_range (fees are flowing)
+  - pnl_pct is negative but IL < fees_earned (fees still winning)
+
+MANAGEMENT — REBALANCE when:
+  - OOR but pool metrics (volume, fee_tvl) still strong
+  - volume > ${config.management.minVolumeToRebalance} indicates continued interest
+
+SCREENING — DEPLOY when ALL are true:
+  1. Pool passes all screening thresholds
+  2. mtf_validated = true (consistent across timeframes)
+  3. smart_wallets present OR strong narrative
+  4. Market is NOT BEARISH (or pool has exceptional metrics)
+  5. Circuit breaker is not active
+
+IL AWARENESS:
+  - Track fee_to_il_ratio for every position
+  - Positions where fees > IL are net profitable — be patient
+  - Positions where IL >> fees — cut early, don't wait for recovery
+
+═══════════════════════════════════════════
  TIMEFRAME SCALING
 ═══════════════════════════════════════════
 fee_active_tvl_ratio scales with the observation window:

@@ -50,10 +50,46 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedMints = new Set(positions.map((p: any) => p.base_mint).filter(Boolean));
 
   const eligible = pools
-    .filter((p: any) => !occupiedPools.has(p.pool) && !occupiedMints.has(p.base?.mint))
-    .slice(0, limit);
+    .filter((p: any) => !occupiedPools.has(p.pool) && !occupiedMints.has(p.base?.mint));
 
-  return { candidates: eligible, total_screened: pools.length };
+  // Multi-timeframe validation: cross-check top candidates against 1h timeframe
+  const validated = await validateMultiTimeframe(eligible.slice(0, Math.min(limit * 2, 20)));
+
+  return { candidates: validated.slice(0, limit), total_screened: pools.length };
+}
+
+async function validateMultiTimeframe(pools: any[]): Promise<any[]> {
+  if (pools.length === 0) return [];
+  const s = config.screening;
+
+  try {
+    // Fetch same pools with 1h timeframe for cross-validation
+    const filters = `pool_type=dlmm`;
+    const url = `${POOL_DISCOVERY_BASE}/pools?page_size=50&filter_by=${encodeURIComponent(filters)}&timeframe=1h&category=${s.category}`;
+    const res = await fetch(url);
+    if (!res.ok) return pools; // fallback: skip validation
+
+    const data = await res.json();
+    const hourlyPools = new Map<string, any>();
+    for (const p of (data.data || [])) {
+      hourlyPools.set(p.pool_address, p);
+    }
+
+    // Score each pool: bonus if also strong in 1h timeframe
+    return pools
+      .map((pool: any) => {
+        const hourly = hourlyPools.get(pool.pool);
+        const mtfScore = hourly
+          ? (hourly.fee_active_tvl_ratio >= s.minFeeActiveTvlRatio ? 1 : 0)
+            + (hourly.volume >= s.minVolume ? 1 : 0)
+            + ((hourly.price_change_percentage ?? 0) > -10 ? 1 : 0) // not crashing
+          : 0;
+        return { ...pool, mtf_score: mtfScore, mtf_validated: mtfScore >= 2 };
+      })
+      .sort((a: any, b: any) => b.mtf_score - a.mtf_score);
+  } catch {
+    return pools; // fallback on error
+  }
 }
 
 export async function getPoolDetail({ pool_address, timeframe = "5m" }: { pool_address: string; timeframe?: string }) {

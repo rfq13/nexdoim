@@ -33,6 +33,12 @@ export async function recordPerformance(perf: {
     ? ((perf.minutes_in_range ?? 0) / perf.minutes_held!) * 100
     : 0;
 
+  // IL = fees_earned - total_pnl (if fees > pnl, the difference is IL eaten by fees)
+  // IL is the value lost due to price movement: initial_value - final_value (excluding fees)
+  const value_change = perf.final_value_usd - perf.initial_value_usd;
+  const il_usd = value_change < 0 ? Math.abs(value_change) : 0;
+  const fee_to_il_ratio = il_usd > 0 ? perf.fees_earned_usd / il_usd : perf.fees_earned_usd > 0 ? Infinity : 0;
+
   await prisma.performance.create({
     data: {
       position: perf.position,
@@ -54,6 +60,8 @@ export async function recordPerformance(perf: {
       closeReason: perf.close_reason ?? null,
       pnlUsd: Math.round(pnl_usd * 100) / 100,
       pnlPct: Math.round(pnl_pct * 100) / 100,
+      ilUsd: Math.round(il_usd * 100) / 100,
+      feeToIlRatio: fee_to_il_ratio === Infinity ? 999 : Math.round(fee_to_il_ratio * 100) / 100,
       rangeEfficiency: Math.round(range_efficiency * 10) / 10,
       deployedAt: perf.deployed_at ? new Date(perf.deployed_at) : null,
     },
@@ -68,6 +76,9 @@ export async function recordPerformance(perf: {
     pnl_pct: Math.round(pnl_pct * 100) / 100,
     range_efficiency: Math.round(range_efficiency * 10) / 10,
     close_reason: perf.close_reason,
+    il_usd: Math.round(il_usd * 100) / 100,
+    fees_earned_usd: Math.round(perf.fees_earned_usd * 100) / 100,
+    fee_to_il_ratio: fee_to_il_ratio === Infinity ? 999 : Math.round(fee_to_il_ratio * 100) / 100,
   });
   if (lesson) {
     await prisma.lesson.create({ data: lesson });
@@ -105,6 +116,9 @@ function derivLesson(entry: {
   pnl_pct: number;
   range_efficiency: number;
   close_reason?: string;
+  il_usd?: number;
+  fees_earned_usd?: number;
+  fee_to_il_ratio?: number;
 }) {
   const pnl = entry.pnl_pct;
   let outcome: string;
@@ -119,19 +133,25 @@ function derivLesson(entry: {
   const strategy = entry.strategy ?? "unknown";
   const vol = entry.volatility ?? 0;
   const eff = entry.range_efficiency;
+  const il = entry.il_usd ?? 0;
+  const fees = entry.fees_earned_usd ?? 0;
+  const feeIlRatio = entry.fee_to_il_ratio ?? 0;
 
   let rule: string;
   const tags: string[] = [outcome];
 
   if (outcome === "good") {
-    rule = `WORKED: ${pool} ${strategy} → +${pnl.toFixed(1)}%, ${eff}% in-range efficiency`;
+    rule = `WORKED: ${pool} ${strategy} → +${pnl.toFixed(1)}%, ${eff}% in-range`;
+    if (il > 0) rule += `, fees $${fees} > IL $${il} (ratio ${feeIlRatio}x)`;
     tags.push("worked", "screening");
   } else if (outcome === "bad") {
-    rule = `AVOID: ${pool} (volatility=${vol}, strategy=${strategy}) → ${pnl.toFixed(1)}%, range efficiency ${eff}%`;
+    rule = `AVOID: ${pool} (vol=${vol}, ${strategy}) → ${pnl.toFixed(1)}%, ${eff}% in-range`;
+    if (il > 0) rule += `, IL $${il} destroyed fees $${fees} (ratio ${feeIlRatio}x)`;
     if (entry.close_reason) rule += `. Reason: ${entry.close_reason}`;
-    tags.push("failed", "screening");
+    tags.push("failed", "screening", "il_loss");
   } else {
-    rule = `FAILED: ${pool} ${strategy} → ${pnl.toFixed(1)}%, range efficiency ${eff}%`;
+    rule = `FAILED: ${pool} ${strategy} → ${pnl.toFixed(1)}%, ${eff}% in-range`;
+    if (il > 0) rule += `, IL $${il} vs fees $${fees}`;
     if (entry.close_reason) rule += `. Reason: ${entry.close_reason}`;
     tags.push("failed");
   }
@@ -250,14 +270,23 @@ export async function getPerformanceSummary() {
 
   const totalPnl = all.reduce((s, p) => s + (p.pnlUsd ?? 0), 0);
   const totalFees = all.reduce((s, p) => s + (p.feesEarnedUsd ?? 0), 0);
+  const totalIl = all.reduce((s, p) => s + ((p as any).ilUsd ?? 0), 0);
   const winners = all.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+
+  // Recent streak (last 5)
+  const recent = all.sort((a, b) => (b.recordedAt?.getTime() ?? 0) - (a.recordedAt?.getTime() ?? 0)).slice(0, 5);
+  const recentWins = recent.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+  const recentLosses = recent.length - recentWins;
 
   return {
     total_positions_closed: all.length,
     total_pnl_usd: Math.round(totalPnl * 100) / 100,
     total_fees_usd: Math.round(totalFees * 100) / 100,
+    total_il_usd: Math.round(totalIl * 100) / 100,
+    avg_fee_to_il_ratio: totalIl > 0 ? Math.round((totalFees / totalIl) * 100) / 100 : null,
     avg_pnl_pct: Math.round((all.reduce((s, p) => s + (p.pnlPct ?? 0), 0) / all.length) * 100) / 100,
     win_rate_pct: Math.round((winners / all.length) * 100),
+    recent_streak: { wins: recentWins, losses: recentLosses },
   };
 }
 

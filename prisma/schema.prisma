@@ -74,6 +74,8 @@ model Performance {
   closeReason     String?  @map("close_reason")
   pnlUsd          Float?   @map("pnl_usd")
   pnlPct          Float?   @map("pnl_pct")
+  ilUsd           Float?   @map("il_usd")
+  feeToIlRatio    Float?   @map("fee_to_il_ratio")
   rangeEfficiency Float?   @map("range_efficiency")
   deployedAt      DateTime? @map("deployed_at")
   recordedAt      DateTime @default(now()) @map("recorded_at")

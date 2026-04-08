@@ -167,6 +167,26 @@ export function computeDeployAmount(walletSol: number): number {
   return parseFloat(Math.min(ceil, Math.max(floor, dynamic)).toFixed(2));
 }
 
+export function computeBinRange(volatility: number, binStep: number): { binsBelow: number; binsAbove: number } {
+  // Higher volatility → wider range to stay in-range longer
+  // Lower volatility → tighter range for concentrated fees
+  const baseBins = config.strategy.binsBelow;
+
+  if (volatility >= 8) {
+    // Very high volatility: widen range significantly
+    return { binsBelow: Math.min(baseBins * 2, 138), binsAbove: 0 };
+  } else if (volatility >= 5) {
+    // High volatility: moderate widening
+    return { binsBelow: Math.min(Math.round(baseBins * 1.5), 100), binsAbove: 0 };
+  } else if (volatility >= 2) {
+    // Medium volatility: use default
+    return { binsBelow: baseBins, binsAbove: 0 };
+  } else {
+    // Low volatility: tighten for concentrated fees
+    return { binsBelow: Math.max(Math.round(baseBins * 0.6), 20), binsAbove: 0 };
+  }
+}
+
 export async function reloadScreeningThresholds() {
   await loadConfig();
 }

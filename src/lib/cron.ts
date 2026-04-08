@@ -1,12 +1,13 @@
 import cron from "node-cron";
 import { agentLoop } from "./agent";
-import { config, computeDeployAmount } from "./config";
+import { config, computeDeployAmount, computeBinRange } from "./config";
 import { log } from "./logger";
 import { getMyPositions, getPositionPnl } from "./tools/dlmm";
 import { getWalletBalances } from "./tools/wallet";
 import { getTopCandidates } from "./tools/screening";
 import { getTokenHolders, getTokenNarrative, getTokenInfo } from "./tools/token";
 import { checkSmartWalletsOnPool } from "./smart-wallets";
+import { studyTopLPers } from "./tools/study";
 import { getTrackedPosition, getLastBriefingDate, setLastBriefingDate } from "./state";
 import { getActiveStrategy } from "./strategy-library";
 import { recordPositionSnapshot, recallForPool } from "./pool-memory";
@@ -14,6 +15,30 @@ import { generateBriefing } from "./briefing";
 import { sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, startPolling, stopPolling } from "./telegram";
 import { registerCronRestarter } from "./tools/executor";
 import { getPerformanceSummary } from "./lessons";
+
+// ─── Market Context ──────────────────────────────────────────
+async function getMarketContext(): Promise<string> {
+  try {
+    const res = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112");
+    if (!res.ok) return "SOL price: unavailable";
+    const data = await res.json();
+    const sol = data.data?.["So11111111111111111111111111111111111111112"];
+    const price = parseFloat(sol?.price ?? 0);
+
+    // Get 24h price change from CoinGecko-compatible endpoint
+    const cgRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true").catch(() => null);
+    let change24h = "?";
+    if (cgRes?.ok) {
+      const cgData = await cgRes.json();
+      change24h = (cgData.solana?.usd_24h_change ?? 0).toFixed(2);
+    }
+
+    const regime = parseFloat(change24h) > 5 ? "BULLISH" : parseFloat(change24h) < -5 ? "BEARISH" : "NEUTRAL";
+    return `SOL: $${price.toFixed(2)} (24h: ${change24h}%) | Market: ${regime}`;
+  } catch {
+    return "SOL price: fetch failed";
+  }
+}
 
 let _cronTasks: cron.ScheduledTask[] = [];
 let _managementBusy = false;
@@ -40,12 +65,15 @@ export async function runManagementCycle({ silent = false } = {}) {
       runScreeningCycle().catch(() => {});
     }
 
-    const positionData = await Promise.all(positions.map(async (p: any) => {
-      await recordPositionSnapshot(p.pool, p);
-      const pnl = await getPositionPnl({ pool_address: p.pool, position_address: p.position }).catch(() => null);
-      const recall = await recallForPool(p.pool);
-      return { ...p, pnl, recall };
-    }));
+    const [positionData, marketCtx] = await Promise.all([
+      Promise.all(positions.map(async (p: any) => {
+        await recordPositionSnapshot(p.pool, p);
+        const pnl = await getPositionPnl({ pool_address: p.pool, position_address: p.position }).catch(() => null);
+        const recall = await recallForPool(p.pool);
+        return { ...p, pnl, recall };
+      })),
+      getMarketContext(),
+    ]);
 
     const positionBlocks = positionData.map((p: any) => {
       const pnl = p.pnl;
@@ -61,7 +89,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     }).join("\n\n");
 
     const { content } = await agentLoop(
-      `MANAGEMENT CYCLE — ${positions.length} position(s)\n\nPRE-LOADED POSITION DATA:\n${positionBlocks}\n\nApply hard close rules. Report format: **[PAIR]** | Age: [X]m | PnL: [X]% | [STAY/CLOSE]`,
+      `MANAGEMENT CYCLE — ${positions.length} position(s)\n\nMARKET: ${marketCtx}\n\nPRE-LOADED POSITION DATA:\n${positionBlocks}\n\nApply hard close rules. In BEARISH market, lower thresholds for closing. Report format: **[PAIR]** | Age: [X]m | PnL: [X]% | [STAY/CLOSE]`,
       config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 4096
     );
     mgmtReport = content;
@@ -77,6 +105,21 @@ export async function runManagementCycle({ silent = false } = {}) {
 export async function runScreeningCycle({ silent = false } = {}) {
   if (_screeningBusy) return;
 
+  // Circuit breaker: pause if on losing streak
+  try {
+    const perf = await getPerformanceSummary();
+    if (perf && perf.total_positions_closed >= 5) {
+      if (perf.win_rate_pct < 25) {
+        log("cron", `Circuit breaker: win rate ${perf.win_rate_pct}% < 25% over ${perf.total_positions_closed} positions — screening paused`);
+        return;
+      }
+      if (perf.recent_streak.losses >= 4) {
+        log("cron", `Circuit breaker: ${perf.recent_streak.losses} consecutive losses — screening paused`);
+        return;
+      }
+    }
+  } catch { /* continue if perf check fails */ }
+
   let prePositions: any, preBalance: any;
   try {
     [prePositions, preBalance] = await Promise.all([getMyPositions(), getWalletBalances()]);
@@ -89,8 +132,11 @@ export async function runScreeningCycle({ silent = false } = {}) {
   let screenReport: string | null = null;
 
   try {
-    const deployAmount = computeDeployAmount(preBalance.sol);
-    const activeStrategy = await getActiveStrategy();
+    const [deployAmount, activeStrategy, marketCtx] = await Promise.all([
+      Promise.resolve(computeDeployAmount(preBalance.sol)),
+      getActiveStrategy(),
+      getMarketContext(),
+    ]);
     const strategyBlock = activeStrategy
       ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${activeStrategy.lpStrategy}`
       : "No active strategy — use default bid_ask.";
@@ -99,31 +145,38 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const candidates = topCandidates?.candidates || [];
 
     const candidateBlocks: string[] = [];
-    for (const pool of candidates.slice(0, 5)) {
+    for (let i = 0; i < Math.min(candidates.length, 5); i++) {
+      const pool = candidates[i];
       const mint = pool.base?.mint;
-      const [sw, h, n, ti, mem] = await Promise.allSettled([
+      const [sw, h, n, ti, mem, lpers] = await Promise.allSettled([
         checkSmartWalletsOnPool({ pool_address: pool.pool }),
         mint ? getTokenHolders({ mint, limit: 100 }) : Promise.resolve(null),
         mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
         mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
         Promise.resolve(await recallForPool(pool.pool)),
+        i < 3 ? studyTopLPers({ pool_address: pool.pool, limit: 3 }).catch(() => null) : Promise.resolve(null),
       ]);
 
       const swVal = sw.status === "fulfilled" ? sw.value : null;
       const tiVal = ti.status === "fulfilled" ? (ti.value as any)?.results?.[0] : null;
       const nVal = n.status === "fulfilled" ? n.value : null;
 
+      const suggestedBins = computeBinRange(pool.volatility ?? 3, pool.bin_step ?? 80);
+      const lpersVal = lpers.status === "fulfilled" ? lpers.value : null;
+      const lpersPatterns = (lpersVal as any)?.patterns;
       candidateBlocks.push([
         `POOL: ${pool.name} (${pool.pool})`,
         `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}`,
+        `  suggested_bins: below=${suggestedBins.binsBelow}, above=${suggestedBins.binsAbove} (based on volatility)`,
         `  smart_wallets: ${(swVal as any)?.in_pool?.length ?? 0} present`,
+        lpersPatterns ? `  top_lpers: ${lpersPatterns.top_lper_count} found, avg_win_rate=${lpersPatterns.avg_win_rate}%, avg_hold=${lpersPatterns.avg_hold_hours}h, best_roi=${lpersPatterns.best_roi}` : null,
         nVal && (nVal as any).narrative ? `  narrative: ${(nVal as any).narrative.slice(0, 300)}` : `  narrative: none`,
         (mem as any).value ? `  memory: ${(mem as any).value}` : null,
       ].filter(Boolean).join("\n"));
     }
 
     const { content } = await agentLoop(
-      `SCREENING CYCLE\n${strategyBlock}\nPositions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${preBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL\n\n${candidateBlocks.join("\n\n")}`,
+      `SCREENING CYCLE\nMARKET: ${marketCtx}\n${strategyBlock}\nPositions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${preBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL\n\nIn BEARISH market, raise entry bar — only deploy on strongest candidates.\n\n${candidateBlocks.join("\n\n")}`,
       config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048
     );
     screenReport = content;
