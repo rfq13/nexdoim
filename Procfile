@@ -1,1 +1,2 @@
-web: bun server.ts
+web: npm start
+
