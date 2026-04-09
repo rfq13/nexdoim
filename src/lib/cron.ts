@@ -97,7 +97,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     log("cron_error", `Management cycle failed: ${error.message}`);
     mgmtReport = `Management cycle failed: ${error.message}`;
   } finally {
-    if (!silent && telegramEnabled() && mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
+    if (!silent && (await telegramEnabled()) && mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
   }
   return mgmtReport;
 }
@@ -185,7 +185,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     screenReport = `Screening cycle failed: ${error.message}`;
   } finally {
     _screeningBusy = false;
-    if (!silent && telegramEnabled() && screenReport) sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
+    if (!silent && (await telegramEnabled()) && screenReport) sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
   }
   return screenReport;
 }
@@ -193,7 +193,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
 async function runBriefing() {
   try {
     const briefing = await generateBriefing();
-    if (telegramEnabled()) await sendHTML(briefing);
+    if (await telegramEnabled()) await sendHTML(briefing);
     await setLastBriefingDate();
   } catch (error: any) { log("cron_error", `Morning briefing failed: ${error.message}`); }
 }

@@ -1,5 +1,5 @@
 import { supabase } from "./db";
-import { getPerformanceSummary } from "./lessons.js";
+import { getPerformanceSummary } from "./lessons";
 
 export async function generateBriefing(): Promise<string> {
   const now = new Date();

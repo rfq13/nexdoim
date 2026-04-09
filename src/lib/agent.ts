@@ -61,8 +61,8 @@ function getToolsForRole(agentType: string) {
   return [...tools];
 }
 
-const client = createOllamaClient();
-const DEFAULT_MODEL = getDefaultModel();
+const clientPromise = createOllamaClient();
+const DEFAULT_MODELPromise = getDefaultModel();
 
 export async function agentLoop(
   goal: string,
@@ -72,6 +72,8 @@ export async function agentLoop(
   model: string | null = null,
   maxOutputTokens: number | null = null,
 ): Promise<{ content: string; userMessage: string }> {
+  const client = await clientPromise;
+  const DEFAULT_MODEL = await DEFAULT_MODELPromise;
   const [portfolio, positions] = await Promise.all([
     getWalletBalances(),
     getMyPositions(),
@@ -94,7 +96,7 @@ export async function agentLoop(
     { role: "user", content: goal },
   ];
 
-  const FALLBACK_MODEL = getFallbackModel();
+  const FALLBACK_MODEL = await getFallbackModel();
 
   for (let step = 0; step < maxSteps; step++) {
     log("agent", `Step ${step + 1}/${maxSteps}`);

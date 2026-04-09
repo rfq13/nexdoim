@@ -51,7 +51,7 @@ async function main() {
   console.log("[meridian] Cron jobs started");
 
   // 5. Start Telegram bot (long polling)
-  if (telegramEnabled()) {
+  if (await telegramEnabled()) {
     startPolling(async (text: string) => {
       try {
         // Handle commands
