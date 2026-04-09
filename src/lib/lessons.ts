@@ -1,4 +1,4 @@
-import { prisma } from "./db";
+import { supabase } from "./db";
 import { log } from "./logger";
 import { config, saveConfig } from "./config";
 
@@ -39,32 +39,30 @@ export async function recordPerformance(perf: {
   const il_usd = value_change < 0 ? Math.abs(value_change) : 0;
   const fee_to_il_ratio = il_usd > 0 ? perf.fees_earned_usd / il_usd : perf.fees_earned_usd > 0 ? Infinity : 0;
 
-  await prisma.performance.create({
-    data: {
-      position: perf.position,
-      pool: perf.pool,
-      poolName: perf.pool_name ?? null,
-      baseMint: perf.base_mint ?? null,
-      strategy: perf.strategy ?? null,
-      binRange: perf.bin_range ?? null,
-      binStep: perf.bin_step ?? null,
-      volatility: perf.volatility ?? null,
-      feeTvlRatio: perf.fee_tvl_ratio ?? null,
-      organicScore: perf.organic_score ?? null,
-      amountSol: perf.amount_sol ?? null,
-      feesEarnedUsd: perf.fees_earned_usd,
-      finalValueUsd: perf.final_value_usd,
-      initialValueUsd: perf.initial_value_usd,
-      minutesInRange: perf.minutes_in_range ?? null,
-      minutesHeld: perf.minutes_held ?? null,
-      closeReason: perf.close_reason ?? null,
-      pnlUsd: Math.round(pnl_usd * 100) / 100,
-      pnlPct: Math.round(pnl_pct * 100) / 100,
-      ilUsd: Math.round(il_usd * 100) / 100,
-      feeToIlRatio: fee_to_il_ratio === Infinity ? 999 : Math.round(fee_to_il_ratio * 100) / 100,
-      rangeEfficiency: Math.round(range_efficiency * 10) / 10,
-      deployedAt: perf.deployed_at ? new Date(perf.deployed_at) : null,
-    },
+  await supabase.from("performance").insert({
+    position: perf.position,
+    pool: perf.pool,
+    pool_name: perf.pool_name ?? null,
+    base_mint: perf.base_mint ?? null,
+    strategy: perf.strategy ?? null,
+    bin_range: perf.bin_range ?? null,
+    bin_step: perf.bin_step ?? null,
+    volatility: perf.volatility ?? null,
+    fee_tvl_ratio: perf.fee_tvl_ratio ?? null,
+    organic_score: perf.organic_score ?? null,
+    amount_sol: perf.amount_sol ?? null,
+    fees_earned_usd: perf.fees_earned_usd,
+    final_value_usd: perf.final_value_usd,
+    initial_value_usd: perf.initial_value_usd,
+    minutes_in_range: perf.minutes_in_range ?? null,
+    minutes_held: perf.minutes_held ?? null,
+    close_reason: perf.close_reason ?? null,
+    pnl_usd: Math.round(pnl_usd * 100) / 100,
+    pnl_pct: Math.round(pnl_pct * 100) / 100,
+    il_usd: Math.round(il_usd * 100) / 100,
+    fee_to_il_ratio: fee_to_il_ratio === Infinity ? 999 : Math.round(fee_to_il_ratio * 100) / 100,
+    range_efficiency: Math.round(range_efficiency * 10) / 10,
+    deployed_at: perf.deployed_at ? new Date(perf.deployed_at).toISOString() : null,
   });
 
   // Derive lesson
@@ -83,7 +81,7 @@ export async function recordPerformance(perf: {
   if (lesson) {
     await prisma.lesson.create({ data: lesson });
     log("lessons", `New lesson: ${lesson.rule}`);
-  }
+  }supabase.from("lessons").insert(lesson
 
   // Pool memory update
   const { recordPoolDeploy } = await import("./pool-memory");
@@ -102,8 +100,9 @@ export async function recordPerformance(perf: {
   });
 
   // Evolve thresholds every 5 positions
-  const count = await prisma.performance.count();
-  if (count % 5 === 0 && count >= MIN_EVOLVE_POSITIONS) {
+  const { count, error } = await supabase.from("performance").select("*", { count: "exact", head: true });
+  if (error) throw error;
+  if (count && count % 5 === 0 && count >= MIN_EVOLVE_POSITIONS) {
     await evolveThresholds();
   }
 }
@@ -161,56 +160,57 @@ function derivLesson(entry: {
 
 // ─── Lessons CRUD ─────────────────────────────────────────────
 
-export async function addLesson(rule: string, tags: string[] = [], opts?: { pinned?: boolean; role?: string | null }) {
-  await prisma.lesson.create({
-    data: {
-      rule,
-      tags,
-      pinned: opts?.pinned ?? false,
-      role: opts?.role ?? null,
+export asupabase.from("lessons").insert({
+    rule,
+    tags,
+    pinned: opts?.pinned ?? false,
+    role: opts?.role ?? null role: opts?.role ?? null,
     },
   });
 }
 
 export async function pinLesson(id: number) {
   await prisma.lesson.update({ where: { id }, data: { pinned: true } });
-  return { pinned: true, id };
+  returnsupabase.from("lessons").update({ pinned: true }).eq("id", id
 }
 
 export async function unpinLesson(id: number) {
   await prisma.lesson.update({ where: { id }, data: { pinned: false } });
-  return { unpinned: true, id };
+  returnsupabase.from("lessons").update({ pinned: false }).eq("id", id
 }
 
 export async function listLessons(opts?: { role?: string; pinned?: boolean; tag?: string; limit?: number }) {
   const where: Record<string, unknown> = {};
-  if (opts?.pinned !== undefined) where.pinned = opts.pinned;
-  if (opts?.role) where.role = opts.role;
-  if (opts?.tag) where.tags = { has: opts.tag };
+  let query = supabase.from("lessons").select("*", { count: "exact" });
+  if (opts?.pinned !== undefined) query = query.eq("pinned", opts.pinned);
+  if (opts?.role) query = query.eq("role", opts.role);
+  if (opts?.tag) query = query.contains("tags", [opts.tag]);
 
-  const lessons = await prisma.lesson.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    take: opts?.limit ?? 50,
-  });
-  return { total: lessons.length, lessons };
-}
+  const { data: lessons, count, error } = await query
+    .order("created_at", { ascending: false })
+    .limit(opts?.limit ?? 50);
+    
+  if (error) throw error;
+  return { total: count ?? 0, lessons: lessons ?? []
 
 export async function clearAllLessons(): Promise<number> {
   const result = await prisma.lesson.deleteMany();
-  return result.count;
-}
+  return{ data, error } = await supabase.from("lessons").delete().select();
+  if (error) throw error;
+  return data?.length ?? 0
 
 export async function clearPerformance(): Promise<number> {
-  const result = await prisma.performance.deleteMany();
-  return result.count;
+  const { data, error } = await supabase.from("performance").delete().select();
+  if (error) throw error;
+  return data?.length ?? 0;
 }
 
 export async function removeLessonsByKeyword(keyword: string): Promise<number> {
-  const all = await prisma.lesson.findMany();
-  const toDelete = all.filter((l) => l.rule.toLowerCase().includes(keyword.toLowerCase()));
+  const { data: all, error } = await supabase.from("lessons").select("id, rule");
+  if (error) throw error;
+  const toDelete = all?.filter((l: any) => l.rule.toLowerCase().includes(keyword.toLowerCase())) ?? [];
   if (toDelete.length > 0) {
-    await prisma.lesson.deleteMany({ where: { id: { in: toDelete.map((l) => l.id) } } });
+    await supabase.from("lessons").delete().in("id", toDelete.map((l: any) => l.id));
   }
   return toDelete.length;
 }
@@ -223,39 +223,31 @@ const MANAGER_TAGS = ["management", "risk", "oor", "fees", "position", "hold", "
 export async function getLessonsForPrompt(opts: { agentType?: string; maxLessons?: number } = {}): Promise<string> {
   const maxLessons = opts.maxLessons ?? 20;
   const agentType = opts.agentType ?? "GENERAL";
-
-  const pinned = await prisma.lesson.findMany({ where: { pinned: true }, take: 5, orderBy: { createdAt: "desc" } });
+{ data: pinned } = await supabase.from("lessons").select("*").eq("pinned", true).order("created_at", { ascending: false }).limit(5);
 
   const roleTags = agentType === "SCREENER" ? SCREENER_TAGS : agentType === "MANAGER" ? MANAGER_TAGS : [];
-  const roleMatched = roleTags.length > 0
-    ? await prisma.lesson.findMany({
-        where: { pinned: false, tags: { hasSome: roleTags } },
-        take: 6,
-        orderBy: { createdAt: "desc" },
-      })
-    : [];
+  const { data: roleMatched } = roleTags.length > 0
+    ? await supabase.from("lessons").select("*").eq("pinned", false).overlaps("tags", roleTags).order("created_at", { ascending: false }).limit(6)
+    : { data: [] };
 
-  const usedIds = new Set([...pinned.map((l) => l.id), ...roleMatched.map((l) => l.id)]);
-  const remaining = maxLessons - pinned.length - roleMatched.length;
-  const recent = remaining > 0
-    ? await prisma.lesson.findMany({
-        where: { id: { notIn: Array.from(usedIds) } },
-        take: remaining,
-        orderBy: { createdAt: "desc" },
-      })
-    : [];
+  const usedIds = new Set([...(pinned ?? []).map((l: any) => l.id), ...(roleMatched ?? []).map((l: any) => l.id)]);
+  const remaining = maxLessons - (pinned?.length ?? 0) - (roleMatched?.length ?? 0);
+  const { data: recent } = remaining > 0
+    ? await supabase.from("lessons").select("*").not("id", "in", Array.from(usedIds)).order("created_at", { ascending: false }).limit(remaining)
+    : { data: [] };
 
   const sections: string[] = [];
-  if (pinned.length) {
+  if (pinned && pinned.length) {
     sections.push(`── PINNED (${pinned.length}) ──`);
-    pinned.forEach((l) => sections.push(`📌 [${l.outcome?.toUpperCase() ?? ""}] ${l.rule}`));
+    pinned.forEach((l: any) => sections.push(`📌 [${l.outcome?.toUpperCase() ?? ""}] ${l.rule}`));
   }
-  if (roleMatched.length) {
+  if (roleMatched && roleMatched.length) {
     sections.push(`── ${agentType} (${roleMatched.length}) ──`);
-    roleMatched.forEach((l) => sections.push(`[${l.outcome?.toUpperCase() ?? ""}] ${l.rule}`));
+    roleMatched.forEach((l: any) => sections.push(`[${l.outcome?.toUpperCase() ?? ""}] ${l.rule}`));
   }
-  if (recent.length) {
+  if (recent && recent.length) {
     sections.push(`── RECENT (${recent.length}) ──`);
+    recent.forEach((l: any RECENT (${recent.length}) ──`);
     recent.forEach((l) => sections.push(`[${l.outcome?.toUpperCase() ?? ""}] ${l.rule}`));
   }
 
@@ -272,10 +264,17 @@ export async function getPerformanceSummary() {
   const totalFees = all.reduce((s, p) => s + (p.feesEarnedUsd ?? 0), 0);
   const totalIl = all.reduce((s, p) => s + ((p as any).ilUsd ?? 0), 0);
   const winners = all.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+{ data: all, error } = await supabase.from("performance").select("*");
+  if (error || !all || all.length === 0) return null;
+
+  const totalPnl = all.reduce((s, p: any) => s + (p.pnl_usd ?? 0), 0);
+  const totalFees = all.reduce((s, p: any) => s + (p.fees_earned_usd ?? 0), 0);
+  const totalIl = all.reduce((s, p: any) => s + (p.il_usd ?? 0), 0);
+  const winners = all.filter((p: any) => (p.pnl_usd ?? 0) > 0).length;
 
   // Recent streak (last 5)
-  const recent = all.sort((a, b) => (b.recordedAt?.getTime() ?? 0) - (a.recordedAt?.getTime() ?? 0)).slice(0, 5);
-  const recentWins = recent.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+  const recent = [...all].sort((a, b: any) => (new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime())).slice(0, 5);
+  const recentWins = recent.filter((p: any) => (p.pnl_usd ?? 0) > 0).length;
   const recentLosses = recent.length - recentWins;
 
   return {
@@ -284,29 +283,24 @@ export async function getPerformanceSummary() {
     total_fees_usd: Math.round(totalFees * 100) / 100,
     total_il_usd: Math.round(totalIl * 100) / 100,
     avg_fee_to_il_ratio: totalIl > 0 ? Math.round((totalFees / totalIl) * 100) / 100 : null,
-    avg_pnl_pct: Math.round((all.reduce((s, p) => s + (p.pnlPct ?? 0), 0) / all.length) * 100) / 100,
-    win_rate_pct: Math.round((winners / all.length) * 100),
-    recent_streak: { wins: recentWins, losses: recentLosses },
-  };
-}
-
-export async function getPerformanceHistory(opts?: { hours?: number; limit?: number }) {
-  const where: Record<string, unknown> = {};
+    avg_pnl_pct: Math.round((all.reduce((s, p: any) => s + (p.pnl_p
   if (opts?.hours) {
     where.recordedAt = { gte: new Date(Date.now() - opts.hours * 3600_000) };
   }
   return prisma.performance.findMany({
     where,
     orderBy: { recordedAt: "desc" },
-    take: opts?.limit ?? 50,
-  });
-}
-
-// ─── Threshold Evolution ──────────────────────────────────────
-
-export async function evolveThresholds() {
-  const all = await prisma.performance.findMany();
-  if (all.length < MIN_EVOLVE_POSITIONS) return null;
+  let query = supabase.from("performance").select("*");
+  if (opts?.hours) {
+    const startTime = new Date(Date.now() - opts.hours * 3600_000).toISOString();
+    query = query.gte("recorded_at", startTime);
+  }
+  const { data, error } = await query
+    .order("recorded_at", { ascending: false })
+    .limit(opts?.limit ?? 100);
+    
+  if (error) throw error;
+  return data ?? [];(all.length < MIN_EVOLVE_POSITIONS) return null;
 
   const winners = all.filter((p) => (p.pnlPct ?? 0) > 0);
   const losers = all.filter((p) => (p.pnlPct ?? 0) < -5);

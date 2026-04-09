@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export async function GET() {
   try {
-    const secrets = await prisma.secret.findMany({
-      orderBy: { updatedAt: "desc" },
-    });
+    const { data: secrets, error } = await supabase
+      .from("secrets")
+      .select("*")
+      .order("updated_at", { ascending: false });
+
+    if (error) throw error;
 
     // Mask values for security
-    const maskedSecrets = secrets.map((s) => ({
+    const maskedSecrets = secrets.map((s: any) => ({
       ...s,
       value:
         s.value.length > 8
@@ -32,11 +35,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Key and value are required" },
         { status: 400 },
-      );
-    }
+      );{ data: secret, error } = await supabase
+      .from("secrets")
+      .upsert({ key, value })
+      .select()
+      .single();
 
-    const secret = await prisma.secret.upsert({
-      where: { key },
+    if (error) throw errorwhere: { key },
       update: { value },
       create: { key, value },
     });
@@ -56,9 +61,12 @@ export async function DELETE(req: Request) {
     const key = searchParams.get("key");
     if (!key) {
       return NextResponse.json({ error: "Key is required" }, { status: 400 });
-    }
+    const { error } = await supabase
+      .from("secrets")
+      .delete()
+      .eq("key", key);
 
-    await prisma.secret.delete({
+    if (error) throw errorait prisma.secret.delete({
       where: { key },
     });
 

@@ -1,17 +1,24 @@
-import { prisma } from "./db";
+import { supabase } from "./db";
 import { getPerformanceSummary } from "./lessons";
 
 export async function generateBriefing(): Promise<string> {
   const now = new Date();
   const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-  const allPositions = await prisma.position.findMany();
-  const openedLast24h = allPositions.filter((p) => p.deployedAt > last24h);
-  const closedLast24h = allPositions.filter((p) => p.closed && p.closedAt && p.closedAt > last24h);
-
-  const perfLast24h = await prisma.performance.findMany({ where: { recordedAt: { gte: last24h } } });
-  const totalPnlUsd = perfLast24h.reduce((s, p) => s + (p.pnlUsd ?? 0), 0);
-  const totalFeesUsd = perfLast24h.reduce((s, p) => s + (p.feesEarnedUsd ?? 0), 0);
+  const { data: allPositions } = await supabase.from("positions").select("*");
+  if (!allPositions) return "No positions found";
+  const openedLast24h = allPositions.filter((p: any) => new Date(p.deployed_at) > last24h);
+  const closedLast24h = allPositions.filter((p: any) => p.closed && p.closed_at && new Date(p.closed_at) > last24h);
+{ data: perfLast24h } = await supabase
+    .from("performance")
+    .select("*")
+    .gte("recorded_at", last24h.toISOString());
+  const totalPnlUsd = (perfLast24h ?? []).reduce((s, p: any) => s + (p.pnl_usd ?? 0), 0);
+  const { data: lessonsLast24h } = await supabase
+    .from("lessons")
+    .select("*")
+    .gte("created_at", last24h.toISOString());
+  const openPositions = (allPositions ?? []).filter((p: anyp) => s + (p.feesEarnedUsd ?? 0), 0);
 
   const lessonsLast24h = await prisma.lesson.findMany({ where: { createdAt: { gte: last24h } } });
   const openPositions = allPositions.filter((p) => !p.closed);

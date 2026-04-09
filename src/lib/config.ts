@@ -1,4 +1,4 @@
-import { prisma } from "./db";
+import { supabase } from "./db";
 import { log } from "./logger";
 
 export interface MeridianConfig {
@@ -125,13 +125,21 @@ export let config: MeridianConfig = structuredClone(DEFAULT_CONFIG);
 
 export async function getSecret(key: string): Promise<string | undefined> {
   try {
-    const secret = await prisma.secret.findUnique({ where: { key } });
+    const { data: secret } = await supabase
+      .from("secrets")
+      .select("value")
+      .eq("key", key)
+      .single();
     return secret?.value;
   } catch (e) {
     log("config_error", `Failed to fetch secret ${key}: ${e}`);
     return process.env[key]; // Fallback to .env if DB fails
   }
-}
+}{ data: row } = await supabase
+      .from("config")
+      .select("data")
+      .eq("id", 1)
+      .single(
 
 export async function loadConfig(): Promise<MeridianConfig> {
   try {
@@ -143,14 +151,19 @@ export async function loadConfig(): Promise<MeridianConfig> {
   } catch {
     log("config", "No config in DB, using defaults");
   }
-  return config;
-}
-
-export async function saveConfig(partial: Record<string, unknown>) {
-  const current = await prisma.config.findUnique({ where: { id: 1 } });
+  return{ data: current } = await supabase
+    .from("config")
+    .select("data")
+    .eq("id", 1)
+    .single();
   const existing = (current?.data as Record<string, unknown>) ?? {};
   const merged = { ...existing, ...partial };
-  await prisma.config.upsert({
+  
+  const { error } = await supabase
+    .from("config")
+    .upsert({ id: 1, data: merged as object });
+    
+  if (error) throw errorait prisma.config.upsert({
     where: { id: 1 },
     update: { data: merged as object },
     create: { id: 1, data: merged as object },
