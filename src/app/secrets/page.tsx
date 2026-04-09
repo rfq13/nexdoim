@@ -44,7 +44,8 @@ export default function SecretsPage() {
   const [editValue, setEditValue] = useState("");
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
     fetchSecrets();
@@ -75,7 +76,7 @@ export default function SecretsPage() {
 
   async function saveSecret() {
     if (!editingKey || !editValue) return;
-    setSaving(true);
+    setSavingKey(editingKey);
     try {
       await fetch("/api/secrets", {
         method: "POST",
@@ -87,13 +88,13 @@ export default function SecretsPage() {
     } catch (e) {
       console.error("Failed to save secret", e);
     } finally {
-      setSaving(false);
+      setSavingKey(null);
     }
   }
 
   async function addNewSecret() {
     if (!newKey || !newValue) return;
-    setSaving(true);
+    setIsAdding(true);
     try {
       await fetch("/api/secrets", {
         method: "POST",
@@ -105,7 +106,7 @@ export default function SecretsPage() {
     } catch (e) {
       console.error("Failed to add secret", e);
     } finally {
-      setSaving(false);
+      setIsAdding(false);
     }
   }
 
@@ -142,10 +143,10 @@ export default function SecretsPage() {
           />
           <button
             onClick={addNewSecret}
-            disabled={saving}
+            disabled={isAdding}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
           >
-            {saving ? "Saving..." : "Add"}
+            {isAdding ? "Saving..." : "Add"}
           </button>
         </div>
       </div>
@@ -190,13 +191,15 @@ export default function SecretsPage() {
                   <>
                     <button
                       onClick={saveSecret}
-                      className="px-3 py-1 bg-green-600 text-white rounded text-sm"
+                      disabled={savingKey === s.key}
+                      className="px-3 py-1 bg-green-600 text-white rounded text-sm disabled:opacity-50"
                     >
-                      Save
+                      {savingKey === s.key ? "Saving..." : "Save"}
                     </button>
                     <button
                       onClick={() => setEditingKey(null)}
-                      className="px-3 py-1 bg-gray-500 text-white rounded text-sm"
+                      disabled={savingKey === s.key}
+                      className="px-3 py-1 bg-gray-500 text-white rounded text-sm disabled:opacity-50"
                     >
                       Cancel
                     </button>
