@@ -9,6 +9,20 @@ interface Secret {
   value: string;
 }
 
+const EXPECTED_KEYS = [
+  "OLLAMA_HOST",
+  "OLLAMA_MODEL",
+  "OLLAMA_FALLBACK_MODEL",
+  "OLLAMA_API_KEY",
+  "LLM_API_KEY",
+  "OPENROUTER_API_KEY",
+  "TELEGRAM_BOT_TOKEN",
+  "RPC_URL",
+  "WALLET_PRIVATE_KEY",
+  "HELIUS_API_KEY",
+  "DRY_RUN"
+];
+
 export default function SecretsPage() {
   const [secrets, setSecrets] = useState<Secret[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,7 +41,17 @@ export default function SecretsPage() {
     try {
       const res = await fetch("/api/secrets");
       const data = await res.json();
-      setSecrets(Array.isArray(data) ? data : []);
+      const existing = Array.isArray(data) ? data : [];
+      
+      const merged = EXPECTED_KEYS.map((k) => {
+        const found = existing.find((s: Secret) => s.key === k);
+        return found || { id: k, key: k, value: "" };
+      });
+      existing.forEach((s: Secret) => {
+        if (!EXPECTED_KEYS.includes(s.key)) merged.push(s);
+      });
+      
+      setSecrets(merged);
     } catch (e) {
       console.error("Failed to fetch secrets", e);
     } finally {
@@ -134,8 +158,8 @@ export default function SecretsPage() {
                     autoFocus
                   />
                 ) : (
-                  <span className="ml-4 text-gray-500 font-mono text-sm">
-                    {s.value}
+                  <span className={`ml-4 font-mono text-sm ${s.value ? "text-gray-500" : "text-red-500 font-bold"}`}>
+                    {s.value ? s.value : "[NOT CONFIGURED]"}
                   </span>
                 )}
               </div>
@@ -160,18 +184,20 @@ export default function SecretsPage() {
                     <button
                       onClick={() => {
                         setEditingKey(s.key);
-                        setEditValue("********");
+                        setEditValue("");
                       }}
                       className="px-3 py-1 bg-blue-600 text-white rounded text-sm"
                     >
-                      Edit
+                      {s.value ? "Edit" : "Set Value"}
                     </button>
-                    <button
-                      onClick={() => deleteSecret(s.key)}
-                      className="px-3 py-1 bg-red-600 text-white rounded text-sm"
-                    >
-                      Delete
-                    </button>
+                    {s.value && (
+                      <button
+                        onClick={() => deleteSecret(s.key)}
+                        className="px-3 py-1 bg-red-600 text-white rounded text-sm"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </>
                 )}
               </div>
