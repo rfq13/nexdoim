@@ -23,6 +23,20 @@ const EXPECTED_KEYS = [
   "DRY_RUN"
 ];
 
+const KEY_INSTRUCTIONS: Record<string, string> = {
+  OLLAMA_HOST: "URL API Ollama (contoh: http://localhost:11434).",
+  OLLAMA_MODEL: "Nama model utama (contoh: llama3).",
+  OLLAMA_FALLBACK_MODEL: "Nama model cadangan jika utama gagal.",
+  OLLAMA_API_KEY: "Dapatkan dari provider cloud Ollama Anda (kosongkan jika lokal).",
+  LLM_API_KEY: "Dapatkan dari layanan kustom jika tidak menggunakan standard (fallback dari OLLAMA_API_KEY).",
+  OPENROUTER_API_KEY: "Dapatkan OpenRouter API Key di https://openrouter.ai/keys",
+  TELEGRAM_BOT_TOKEN: "Buat bot baru dan dapatkan token via @BotFather di Telegram.",
+  RPC_URL: "URL RPC jaringan Solana (dapatkan dari Helius, QuickNode, Alchemy, dll).",
+  WALLET_PRIVATE_KEY: "Export private key dari wallet Solana Anda. JANGAN DIBAGIKAN KE SIAPAPUN.",
+  HELIUS_API_KEY: "Dapatkan API Key Helius di dashboard mereka (https://dev.helius.xyz/).",
+  DRY_RUN: "Isi dengan 'true' untuk mode simulasi tanpa melakukan aksi sungguhan."
+};
+
 export default function SecretsPage() {
   const [secrets, setSecrets] = useState<Secret[]>([]);
   const [loading, setLoading] = useState(true);
@@ -146,19 +160,27 @@ export default function SecretsPage() {
               key={s.id}
               className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm"
             >
-              <div className="flex-1">
-                <span className="font-mono font-bold text-sm text-gray-700 dark:text-gray-300">
+              <div className="flex-1 flex items-center flex-wrap gap-2">
+                <span className="font-mono font-bold text-sm text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
                   {s.key}
+                  {KEY_INSTRUCTIONS[s.key] && (
+                    <span 
+                      className="cursor-help inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300 text-[10px]"
+                      title={KEY_INSTRUCTIONS[s.key]}
+                    >
+                      ?
+                    </span>
+                  )}
                 </span>
                 {editingKey === s.key ? (
                   <input
-                    className="ml-4 p-1 border rounded dark:bg-gray-900 dark:border-gray-600 w-full max-w-xs"
+                    className="p-1 border rounded dark:bg-gray-900 dark:border-gray-600 w-full max-w-xs"
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
                     autoFocus
                   />
                 ) : (
-                  <span className={`ml-4 font-mono text-sm ${s.value ? "text-gray-500" : "text-red-500 font-bold"}`}>
+                  <span className={`font-mono text-sm ${s.value ? "text-gray-500" : "text-red-500 font-bold"}`}>
                     {s.value ? s.value : "[NOT CONFIGURED]"}
                   </span>
                 )}
