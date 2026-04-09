@@ -132,8 +132,10 @@ export async function getSecret(key: string): Promise<string | undefined> {
 
     if (error) throw error;
     return data?.value ?? process.env[key];
-  } catch (e) {
-    log("config_error", `Failed to fetch secret ${key}: ${e}`);
+  } catch (e: any) {
+    if (process.env.SUPABASE_URL) {
+      log("config_error", `Failed to fetch secret ${key}: ${e?.message || JSON.stringify(e)}`);
+    }
     return process.env[key];
   }
 }
