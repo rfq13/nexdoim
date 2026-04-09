@@ -1,8 +1,5 @@
 build:
   docker:
     web: Dockerfile
-release:
-  command:
-    - bunx prisma migrate deploy
 run:
   web: bun server.ts

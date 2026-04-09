@@ -120,54 +120,62 @@ const DEFAULT_CONFIG: MeridianConfig = {
   },
 };
 
-// In-memory config, loaded from DB at startup
 export let config: MeridianConfig = structuredClone(DEFAULT_CONFIG);
 
 export async function getSecret(key: string): Promise<string | undefined> {
   try {
-    const { data: secret } = await supabase
+    const { data, error } = await supabase
       .from("secrets")
       .select("value")
       .eq("key", key)
-      .single();
-    return secret?.value;
+      .maybeSingle();
+
+    if (error) throw error;
+    return data?.value ?? process.env[key];
   } catch (e) {
     log("config_error", `Failed to fetch secret ${key}: ${e}`);
-    return process.env[key]; // Fallback to .env if DB fails
+    return process.env[key];
   }
-}{ data: row } = await supabase
-      .from("config")
-      .select("data")
-      .eq("id", 1)
-      .single(
+}
 
 export async function loadConfig(): Promise<MeridianConfig> {
   try {
-    const row = await prisma.config.findUnique({ where: { id: 1 } });
-    if (row?.data) {
-      const saved = row.data as Record<string, unknown>;
-      config = deepMerge(DEFAULT_CONFIG, saved) as MeridianConfig;
+    const { data, error } = await supabase
+      .from("config")
+      .select("data")
+      .eq("id", 1)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data?.data) {
+      config = deepMerge(
+        DEFAULT_CONFIG,
+        data.data as Record<string, unknown>,
+      ) as MeridianConfig;
     }
   } catch {
     log("config", "No config in DB, using defaults");
   }
-  return{ data: current } = await supabase
+  return config;
+}
+
+export async function saveConfig(partial: Record<string, unknown>) {
+  const { data: current, error: currentError } = await supabase
     .from("config")
     .select("data")
     .eq("id", 1)
-    .single();
+    .maybeSingle();
+
+  if (currentError) throw currentError;
+
   const existing = (current?.data as Record<string, unknown>) ?? {};
   const merged = { ...existing, ...partial };
-  
+
   const { error } = await supabase
     .from("config")
-    .upsert({ id: 1, data: merged as object });
-    
-  if (error) throw errorait prisma.config.upsert({
-    where: { id: 1 },
-    update: { data: merged as object },
-    create: { id: 1, data: merged as object },
-  });
+    .upsert({ id: 1, data: merged }, { onConflict: "id" });
+
+  if (error) throw error;
 }
 
 export function computeDeployAmount(walletSol: number): number {
@@ -180,23 +188,26 @@ export function computeDeployAmount(walletSol: number): number {
   return parseFloat(Math.min(ceil, Math.max(floor, dynamic)).toFixed(2));
 }
 
-export function computeBinRange(volatility: number, binStep: number): { binsBelow: number; binsAbove: number } {
-  // Higher volatility → wider range to stay in-range longer
-  // Lower volatility → tighter range for concentrated fees
+export function computeBinRange(
+  volatility: number,
+  binStep: number,
+): { binsBelow: number; binsAbove: number } {
   const baseBins = config.strategy.binsBelow;
 
   if (volatility >= 8) {
-    // Very high volatility: widen range significantly
     return { binsBelow: Math.min(baseBins * 2, 138), binsAbove: 0 };
   } else if (volatility >= 5) {
-    // High volatility: moderate widening
-    return { binsBelow: Math.min(Math.round(baseBins * 1.5), 100), binsAbove: 0 };
+    return {
+      binsBelow: Math.min(Math.round(baseBins * 1.5), 100),
+      binsAbove: 0,
+    };
   } else if (volatility >= 2) {
-    // Medium volatility: use default
     return { binsBelow: baseBins, binsAbove: 0 };
   } else {
-    // Low volatility: tighten for concentrated fees
-    return { binsBelow: Math.max(Math.round(baseBins * 0.6), 20), binsAbove: 0 };
+    return {
+      binsBelow: Math.max(Math.round(baseBins * 0.6), 20),
+      binsAbove: 0,
+    };
   }
 }
 
