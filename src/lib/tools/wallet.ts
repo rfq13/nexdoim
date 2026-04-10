@@ -35,13 +35,19 @@ export function normalizeMint(mint: string | undefined | null): string {
 }
 
 export async function getWalletBalances() {
+  // Debug: test raw getSecret to surface real errors
+  const rawPk = await getSecret("WALLET_PRIVATE_KEY").catch(() => undefined) || process.env.WALLET_PRIVATE_KEY;
+  if (!rawPk) {
+    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "WALLET_PRIVATE_KEY tidak ditemukan di secrets maupun env" };
+  }
+
   let walletAddress: string;
   let wallet: Keypair;
   try {
     wallet = await getWallet();
     walletAddress = wallet.publicKey.toString();
   } catch (e: any) {
-    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "WALLET_PRIVATE_KEY belum dikonfigurasi di /secrets" };
+    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: `Wallet init error: ${e.message}` };
   }
 
   // Always fetch SOL balance directly via RPC — no Helius needed
