@@ -1,7 +1,7 @@
 import { Connection, Keypair, PublicKey, sendAndConfirmTransaction } from "@solana/web3.js";
 import BN from "bn.js";
 import bs58 from "bs58";
-import { config } from "../config";
+import { config, getSecret } from "../config";
 import { log } from "../logger";
 import { trackPosition, markOutOfRange, markInRange, recordClaim, recordClose, getTrackedPosition, minutesOutOfRange, syncOpenPositions } from "../state";
 import { recordPerformance } from "../lessons";
@@ -25,14 +25,35 @@ async function getDLMM() {
 let _connection: Connection | null = null;
 let _wallet: Keypair | null = null;
 
+// Load secrets from Supabase into process.env on first call, so all sync helpers below work.
+let _initDone = false;
+async function ensureInit() {
+  if (_initDone) return;
+  _initDone = true;
+  const [rpc, pk, dry] = await Promise.all([
+    getSecret("RPC_URL"),
+    getSecret("WALLET_PRIVATE_KEY"),
+    getSecret("DRY_RUN"),
+  ]);
+  if (rpc && !process.env.RPC_URL) process.env.RPC_URL = rpc;
+  if (pk && !process.env.WALLET_PRIVATE_KEY) process.env.WALLET_PRIVATE_KEY = pk;
+  if (dry && !process.env.DRY_RUN) process.env.DRY_RUN = dry;
+  // Invalidate cached connection/wallet if secrets changed
+  _connection = null;
+  _wallet = null;
+}
+
 function getConnection() {
-  if (!_connection) _connection = new Connection(process.env.RPC_URL!, "confirmed");
+  if (!_connection) {
+    if (!process.env.RPC_URL) throw new Error("RPC_URL not set — configure di halaman /secrets");
+    _connection = new Connection(process.env.RPC_URL, "confirmed");
+  }
   return _connection;
 }
 
 function getWallet() {
   if (!_wallet) {
-    if (!process.env.WALLET_PRIVATE_KEY) throw new Error("WALLET_PRIVATE_KEY not set");
+    if (!process.env.WALLET_PRIVATE_KEY) throw new Error("WALLET_PRIVATE_KEY not set — configure di halaman /secrets");
     _wallet = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY));
     log("init", `Wallet: ${_wallet.publicKey.toString()}`);
   }
@@ -51,6 +72,7 @@ setInterval(() => poolCache.clear(), 5 * 60 * 1000);
 
 // ─── Get Active Bin ───────────────────────────────────────────
 export async function getActiveBin({ pool_address }: { pool_address: string }) {
+  await ensureInit();
   pool_address = normalizeMint(pool_address);
   const pool = await getPool(pool_address);
   const activeBin = await pool.getActiveBin();
@@ -59,6 +81,7 @@ export async function getActiveBin({ pool_address }: { pool_address: string }) {
 
 // ─── Deploy Position ──────────────────────────────────────────
 export async function deployPosition(args: Record<string, any>) {
+  await ensureInit();
   let { pool_address, amount_sol, amount_x, amount_y, strategy, bins_below, bins_above, single_sided_x, pool_name, bin_step, base_fee, volatility, fee_tvl_ratio, organic_score, initial_value_usd } = args;
   pool_address = normalizeMint(pool_address);
   const activeStrategy = strategy || config.strategy.strategy;
@@ -185,6 +208,7 @@ async function fetchDlmmPnlForPool(poolAddress: string, walletAddress: string): 
 }
 
 export async function getPositionPnl({ pool_address, position_address }: { pool_address: string; position_address: string }) {
+  await ensureInit();
   pool_address = normalizeMint(pool_address);
   position_address = normalizeMint(position_address);
   try {
@@ -213,6 +237,7 @@ let _positionsCacheAt = 0;
 let _positionsInflight: Promise<any> | null = null;
 
 export async function getMyPositions({ force = false } = {}): Promise<any> {
+  await ensureInit();
   if (!force && _positionsCache && Date.now() - _positionsCacheAt < POSITIONS_CACHE_TTL) return _positionsCache;
   if (_positionsInflight) return _positionsInflight;
 
@@ -281,6 +306,7 @@ export async function getMyPositions({ force = false } = {}): Promise<any> {
 }
 
 export async function getWalletPositions({ wallet_address }: { wallet_address: string }) {
+  await ensureInit();
   try {
     const DLMM_PROGRAM = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
     const accounts = await getConnection().getProgramAccounts(DLMM_PROGRAM, {
@@ -329,6 +355,7 @@ export async function searchPools({ query, limit = 10 }: { query: string; limit?
 }
 
 export async function claimFees({ position_address }: { position_address: string }) {
+  await ensureInit();
   position_address = normalizeMint(position_address);
   if (process.env.DRY_RUN === "true") return { dry_run: true, would_claim: position_address };
 
@@ -349,6 +376,7 @@ export async function claimFees({ position_address }: { position_address: string
 }
 
 export async function closePosition({ position_address, skip_swap }: { position_address: string; skip_swap?: boolean }) {
+  await ensureInit();
   position_address = normalizeMint(position_address);
   if (process.env.DRY_RUN === "true") return { dry_run: true, would_close: position_address };
 
@@ -412,6 +440,7 @@ export async function closePosition({ position_address, skip_swap }: { position_
 }
 
 export async function withdrawLiquidity(args: Record<string, any>) {
+  await ensureInit();
   let { position_address, pool_address, bps = 10000, claim_fees = true } = args;
   position_address = normalizeMint(position_address);
   if (pool_address) pool_address = normalizeMint(pool_address);
@@ -446,6 +475,7 @@ export async function withdrawLiquidity(args: Record<string, any>) {
 }
 
 export async function addLiquidity(args: Record<string, any>) {
+  await ensureInit();
   let { position_address, pool_address, amount_x = 0, amount_y = 0, strategy = "spot", single_sided_x = false } = args;
   position_address = normalizeMint(position_address);
   if (pool_address) pool_address = normalizeMint(pool_address);
