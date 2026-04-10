@@ -172,7 +172,7 @@ export async function executeTool(name: string, args: Record<string, any>) {
           try {
             const balances = await getWalletBalances();
             const token = balances.tokens?.find((t: any) => t.mint === result.base_mint);
-            if (token && token.usd >= 0.10) {
+            if (token && (token.usd ?? 0) >= 0.10) {
               // Smart swap: check 1h price trend before swapping
               let shouldSwapNow = true;
               try {
