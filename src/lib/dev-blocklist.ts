@@ -7,7 +7,7 @@
 import { supabase } from "./db";
 import { log } from "./logger";
 
-export async function blockDev(args: { address: string; reason?: string }): Promise<{ blocked?: boolean; already_blocked?: boolean; error?: string; address?: string }> {
+export async function blockDev(args: { address: string; reason?: string }): Promise<{ blocked?: boolean; already_blocked?: boolean; error?: string; address?: string; reason?: string }> {
   const { address, reason } = args;
   if (!address) return { error: "address required" };
 
