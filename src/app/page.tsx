@@ -60,37 +60,33 @@ function DonutRing({ pct, color, size = 80, thick = 10, children }: {
   );
 }
 
-/** Sparkline: array of numbers → SVG polyline */
-function Sparkline({ data, width = 300, height = 60, color }: {
-  data: number[]; width?: number; height?: number; color?: string;
+/** Sparkline: array of numbers → responsive SVG polyline */
+function Sparkline({ data, height = 60, color }: {
+  data: number[]; height?: number; color?: string;
 }) {
   if (data.length < 2) return <div className="text-xs text-(--muted)">Belum ada data</div>;
-  const pad = 4;
+  const W = 400; // viewBox width — SVG scales to container
+  const pad = 6;
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;
   const pts = data.map((v, i) => {
-    const x = pad + (i / (data.length - 1)) * (width - pad * 2);
+    const x = pad + (i / (data.length - 1)) * (W - pad * 2);
     const y = pad + ((max - v) / range) * (height - pad * 2);
     return `${x},${y}`;
   });
-  const area = [
-    `${pad},${height - pad}`,
-    ...pts,
-    `${width - pad},${height - pad}`,
-  ].join(" ");
+  const area = [`${pad},${height - pad}`, ...pts, `${W - pad},${height - pad}`].join(" ");
   const lineColor = color ?? (data[data.length - 1] >= data[0] ? "var(--green)" : "var(--red)");
   const fillColor = lineColor === "var(--green)" ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)";
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+    <svg width="100%" height={height} viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none">
       <polygon points={area} fill={fillColor} />
-      <polyline points={pts.join(" ")} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinejoin="round" />
-      {/* zero line if crosses zero */}
+      <polyline points={pts.join(" ")} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" />
       {min < 0 && max > 0 && (
         <line
           x1={pad} y1={pad + (max / range) * (height - pad * 2)}
-          x2={width - pad} y2={pad + (max / range) * (height - pad * 2)}
-          stroke="var(--border)" strokeWidth="1" strokeDasharray="3,3"
+          x2={W - pad} y2={pad + (max / range) * (height - pad * 2)}
+          stroke="var(--border)" strokeWidth="1" strokeDasharray="4,4"
         />
       )}
     </svg>
@@ -346,7 +342,7 @@ export default function Dashboard() {
               </span>
               <span>Posisi #{histSorted.length}</span>
             </div>
-            <Sparkline data={cumPnl} width={780} height={72} />
+            <Sparkline data={cumPnl} height={72} />
             <div className="flex justify-between text-xs text-(--muted) px-1">
               <span>{new Date(histSorted[0]?.recorded_at).toLocaleDateString("id-ID")}</span>
               <span>{new Date(histSorted.at(-1)?.recorded_at ?? "").toLocaleDateString("id-ID")}</span>
