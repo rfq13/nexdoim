@@ -8,6 +8,8 @@ import { config } from "./config";
 import { getStateSummary } from "./state";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons";
 import { createOllamaClient, getDefaultModel, getFallbackModel } from "./llm";
+import { getWeightsSummary } from "./signal-weights";
+import { getDecisionSummary } from "./decision-log";
 
 const MANAGER_TOOLS = new Set([
   "close_position",
@@ -28,6 +30,10 @@ const MANAGER_TOOLS = new Set([
   "get_token_info",
   "get_active_bin",
   "study_top_lpers",
+  "get_recent_decisions",
+  "block_deployer",
+  "unblock_deployer",
+  "list_blocked_deployers",
 ]);
 const SCREENER_TOOLS = new Set([
   "deploy_position",
@@ -51,6 +57,10 @@ const SCREENER_TOOLS = new Set([
   "add_liquidity",
   "study_top_lpers",
   "get_pool_detail",
+  "get_recent_decisions",
+  "block_deployer",
+  "unblock_deployer",
+  "list_blocked_deployers",
 ]);
 
 function getToolsForRole(agentType: string) {
@@ -81,6 +91,19 @@ export async function agentLoop(
   const stateSummary = await getStateSummary();
   const lessons = await getLessonsForPrompt({ agentType });
   const perfSummary = await getPerformanceSummary();
+
+  // Load adaptive intelligence context (non-critical — never block the agent loop)
+  let weightsSummary: string | null = null;
+  let decisionSummary: string | null = null;
+  if (agentType === "SCREENER" || agentType === "MANAGER") {
+    [weightsSummary, decisionSummary] = await Promise.all([
+      agentType === "SCREENER" && config.darwin?.enabled
+        ? getWeightsSummary().catch(() => null)
+        : Promise.resolve(null),
+      getDecisionSummary(6).catch(() => null),
+    ]);
+  }
+
   const systemPrompt = buildSystemPrompt(
     agentType,
     portfolio,
@@ -88,6 +111,8 @@ export async function agentLoop(
     stateSummary,
     lessons,
     perfSummary,
+    weightsSummary,
+    decisionSummary,
   );
 
   const messages: any[] = [

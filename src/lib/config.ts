@@ -6,24 +6,6 @@ export interface MeridianConfig {
     maxPositions: number;
     maxDeployAmount: number;
   };
-  screening: {
-    minFeeActiveTvlRatio: number;
-    minTvl: number;
-    maxTvl: number;
-    minVolume: number;
-    minOrganic: number;
-    minHolders: number;
-    minMcap: number;
-    maxMcap: number;
-    minBinStep: number;
-    maxBinStep: number;
-    timeframe: string;
-    category: string;
-    minTokenFeesSol: number;
-    maxBundlersPct: number;
-    maxTop10Pct: number;
-    blockedLaunchpads: string[];
-  };
   management: {
     minClaimAmount: number;
     autoSwapAfterClaim: boolean;
@@ -60,6 +42,35 @@ export interface MeridianConfig {
     USDC: string;
     USDT: string;
   };
+  darwin: {
+    enabled: boolean;
+    windowDays: number;
+    minSamples: number;
+    boostFactor: number;
+    decayFactor: number;
+    weightFloor: number;
+    weightCeiling: number;
+  };
+  screening: {
+    minFeeActiveTvlRatio: number;
+    minTvl: number;
+    maxTvl: number;
+    minVolume: number;
+    minOrganic: number;
+    minHolders: number;
+    minMcap: number;
+    maxMcap: number;
+    minBinStep: number;
+    maxBinStep: number;
+    timeframe: string;
+    category: string;
+    minTokenFeesSol: number;
+    maxBundlersPct: number;
+    maxTop10Pct: number;
+    blockedLaunchpads: string[];
+    avoidPvpSymbols: boolean;
+    blockPvpSymbols: boolean;
+  };
 }
 
 const DEFAULT_CONFIG: MeridianConfig = {
@@ -81,6 +92,8 @@ const DEFAULT_CONFIG: MeridianConfig = {
     maxBundlersPct: 30,
     maxTop10Pct: 60,
     blockedLaunchpads: [],
+    avoidPvpSymbols: true,
+    blockPvpSymbols: false,
   },
   management: {
     minClaimAmount: 5,
@@ -117,6 +130,15 @@ const DEFAULT_CONFIG: MeridianConfig = {
     SOL: "So11111111111111111111111111111111111111112",
     USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+  },
+  darwin: {
+    enabled: true,
+    windowDays: 60,
+    minSamples: 10,
+    boostFactor: 1.05,
+    decayFactor: 0.95,
+    weightFloor: 0.3,
+    weightCeiling: 2.5,
   },
 };
 

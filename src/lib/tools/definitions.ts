@@ -69,4 +69,10 @@ export const tools = [
   // ═══ LIQUIDITY MANAGEMENT ═══
   { type: "function", function: { name: "withdraw_liquidity", description: "Remove partial/full liquidity from a position without closing it.", parameters: { type: "object", properties: { position_address: { type: "string" }, pool_address: { type: "string" }, bps: { type: "number" }, claim_fees: { type: "boolean" } }, required: ["position_address", "pool_address"] } } },
   { type: "function", function: { name: "add_liquidity", description: "Add tokens to an existing position.", parameters: { type: "object", properties: { position_address: { type: "string" }, pool_address: { type: "string" }, amount_x: { type: "number" }, amount_y: { type: "number" }, strategy: { type: "string", enum: ["spot", "curve", "bid_ask"] } }, required: ["position_address", "pool_address"] } } },
+
+  // ═══ INTELLIGENCE & SAFETY ═══
+  { type: "function", function: { name: "get_recent_decisions", description: "Retrieve recent agent decisions (deploy, skip, close) with reasons and risks. Use to avoid repeating past mistakes.", parameters: { type: "object", properties: { limit: { type: "number", description: "Number of decisions to retrieve (default 6, max 20)" } } } } },
+  { type: "function", function: { name: "block_deployer", description: "Permanently block a token deployer/developer wallet. Future pools from this dev will be filtered before reaching the LLM.", parameters: { type: "object", properties: { address: { type: "string", description: "Deployer wallet address to block" }, reason: { type: "string", description: "Why this deployer is being blocked" } }, required: ["address"] } } },
+  { type: "function", function: { name: "unblock_deployer", description: "Remove a developer wallet from the block list.", parameters: { type: "object", properties: { address: { type: "string" } }, required: ["address"] } } },
+  { type: "function", function: { name: "list_blocked_deployers", description: "List all blocked developer/deployer wallets.", parameters: { type: "object", properties: {} } } },
 ] as const;

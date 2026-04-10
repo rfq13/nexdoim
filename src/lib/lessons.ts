@@ -1,6 +1,7 @@
 import { supabase } from "./db";
 import { log } from "./logger";
 import { config, saveConfig } from "./config";
+import { recalculateWeights } from "./signal-weights";
 
 const MIN_EVOLVE_POSITIONS = 5;
 const MAX_CHANGE_PER_STEP = 0.2;
@@ -24,6 +25,7 @@ export async function recordPerformance(perf: {
   minutes_held?: number;
   close_reason?: string;
   deployed_at?: string;
+  signal_snapshot?: Record<string, any> | null;
 }) {
   const pnlUsd =
     perf.final_value_usd + perf.fees_earned_usd - perf.initial_value_usd;
@@ -42,6 +44,17 @@ export async function recordPerformance(perf: {
       : perf.fees_earned_usd > 0
         ? Infinity
         : 0;
+
+  // Fetch signal_snapshot from positions table if not provided directly
+  let signalSnapshot = perf.signal_snapshot ?? null;
+  if (!signalSnapshot && perf.position) {
+    const { data: posRow } = await supabase
+      .from("positions")
+      .select("signal_snapshot")
+      .eq("id", perf.position)
+      .maybeSingle();
+    signalSnapshot = posRow?.signal_snapshot ?? null;
+  }
 
   const { error } = await supabase.from("performance").insert({
     position: perf.position,
@@ -70,6 +83,7 @@ export async function recordPerformance(perf: {
     deployed_at: perf.deployed_at
       ? new Date(perf.deployed_at).toISOString()
       : null,
+    signal_snapshot: signalSnapshot,
   });
 
   if (error) throw error;
@@ -117,6 +131,16 @@ export async function recordPerformance(perf: {
   if (countError) throw countError;
   if ((count ?? 0) % 5 === 0 && (count ?? 0) >= MIN_EVOLVE_POSITIONS) {
     await evolveThresholds();
+  }
+
+  // Trigger Darwinian signal weight recalculation if enabled
+  if (config.darwin?.enabled) {
+    try {
+      const { data: perfRows } = await supabase.from("performance").select("*");
+      await recalculateWeights(perfRows ?? [], config);
+    } catch (e: any) {
+      log("signal_weights", `Recalc skipped: ${e.message}`);
+    }
   }
 }
 

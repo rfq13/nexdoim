@@ -15,6 +15,7 @@ import { generateBriefing } from "./briefing";
 import { sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, startPolling, stopPolling } from "./telegram";
 import { registerCronRestarter } from "./tools/executor";
 import { getPerformanceSummary } from "./lessons";
+import { stageSignals } from "./signal-tracker";
 
 // ─── Market Context ──────────────────────────────────────────
 async function getMarketContext(): Promise<string> {
@@ -164,6 +165,21 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const suggestedBins = computeBinRange(pool.volatility ?? 3, pool.bin_step ?? 80);
       const lpersVal = lpers.status === "fulfilled" ? lpers.value : null;
       const lpersPatterns = (lpersVal as any)?.patterns;
+
+      // Stage signals for Darwinian learning — captured at deploy time
+      stageSignals(pool.pool, {
+        organic_score:         pool.organic_score,
+        fee_tvl_ratio:         pool.fee_active_tvl_ratio,
+        volume:                pool.volume_window,
+        mcap:                  pool.mcap,
+        holder_count:          pool.holders,
+        smart_wallets_present: ((swVal as any)?.in_pool?.length ?? 0) > 0,
+        narrative_quality:     (nVal as any)?.narrative ? "present" : "absent",
+        study_win_rate:        lpersPatterns?.avg_win_rate ?? null,
+        volatility:            pool.volatility ?? null,
+        hive_consensus:        null,
+      });
+
       candidateBlocks.push([
         `POOL: ${pool.name} (${pool.pool})`,
         `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}`,

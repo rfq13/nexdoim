@@ -12,6 +12,8 @@ import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token";
 import { config, saveConfig } from "../config";
 import { log, logAction } from "../logger";
 import { notifyDeploy, notifyClose, notifySwap } from "../telegram";
+import { appendDecision, getRecentDecisions } from "../decision-log";
+import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist";
 
 let _cronRestarter: (() => void) | null = null;
 export function registerCronRestarter(fn: () => void) { _cronRestarter = fn; }
@@ -33,6 +35,10 @@ const CONFIG_MAP: Record<string, [string, string]> = {
   managementIntervalMin: ["schedule", "managementIntervalMin"], screeningIntervalMin: ["schedule", "screeningIntervalMin"],
   managementModel: ["llm", "managementModel"], screeningModel: ["llm", "screeningModel"], generalModel: ["llm", "generalModel"],
   binsBelow: ["strategy", "binsBelow"],
+  avoidPvpSymbols: ["screening", "avoidPvpSymbols"], blockPvpSymbols: ["screening", "blockPvpSymbols"],
+  darwinEnabled: ["darwin", "enabled"], darwinWindowDays: ["darwin", "windowDays"],
+  darwinBoostFactor: ["darwin", "boostFactor"], darwinDecayFactor: ["darwin", "decayFactor"],
+  darwinWeightFloor: ["darwin", "weightFloor"], darwinWeightCeiling: ["darwin", "weightCeiling"],
 };
 
 const toolMap: Record<string, (args: any) => any> = {
@@ -76,6 +82,10 @@ const toolMap: Record<string, (args: any) => any> = {
   add_to_blacklist: addToBlacklist,
   remove_from_blacklist: removeFromBlacklist,
   list_blacklist: listBlacklist,
+  block_deployer: blockDev,
+  unblock_deployer: unblockDev,
+  list_blocked_deployers: listBlockedDevs,
+  get_recent_decisions: async ({ limit }: any) => ({ decisions: await getRecentDecisions(limit ?? 6) }),
   add_lesson: async ({ rule, tags, pinned, role }: any) => {
     await addLesson(rule, tags || [], { pinned: !!pinned, role: role || null });
     return { saved: true, rule, pinned: !!pinned, role: role || "all" };
@@ -140,9 +150,13 @@ export async function executeTool(name: string, args: Record<string, any>) {
 
     if (success) {
       if (name === "swap_token" && result.tx) notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
-      else if (name === "deploy_position") notifyDeploy({ pair: result.pool_name || args.pool_name, amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0], priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+      else if (name === "deploy_position") {
+        notifyDeploy({ pair: result.pool_name || args.pool_name, amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0], priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        appendDecision({ type: "deploy", actor: "SCREENER", pool: args.pool_address, pool_name: args.pool_name, position: result.position, summary: `Deployed ${(args.amount_y ?? args.amount_sol ?? 0).toFixed(3)} SOL into ${args.pool_name || args.pool_address?.slice(0, 8)}`, metrics: { fee_tvl_ratio: args.fee_tvl_ratio, organic_score: args.organic_score, volatility: args.volatility, strategy: args.strategy, bins_below: args.bins_below } }).catch(() => {});
+      }
       else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
+        appendDecision({ type: "close", actor: "MANAGER", position: args.position_address, pool_name: result.pool_name, summary: `Closed position — PnL: ${result.pnl_pct ?? 0}% ($${result.pnl_usd ?? 0})`, metrics: { pnl_usd: result.pnl_usd, pnl_pct: result.pnl_pct, fees_earned_usd: result.fees_earned_usd, close_reason: result.close_reason } }).catch(() => {});
         if (!args.skip_swap && result.base_mint) {
           try {
             const balances = await getWalletBalances();

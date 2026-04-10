@@ -20,6 +20,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <a href="/" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">Dashboard</a>
             <a href="/positions" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">Positions</a>
             <a href="/lessons" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">Lessons</a>
+            <a href="/signal-weights" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">Signals</a>
+            <a href="/decisions" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">Decisions</a>
             <a href="/config" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">Config</a>
             <a href="/secrets" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">API Keys</a>
             <a href="/chat" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">Chat</a>

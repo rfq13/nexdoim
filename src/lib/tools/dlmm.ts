@@ -6,6 +6,8 @@ import { log } from "../logger";
 import { trackPosition, markOutOfRange, markInRange, recordClaim, recordClose, getTrackedPosition, minutesOutOfRange, syncOpenPositions } from "../state";
 import { recordPerformance } from "../lessons";
 import { normalizeMint } from "./wallet";
+import { getAndClearStagedSignals } from "../signal-tracker";
+import { supabase } from "../db";
 
 // ─── Lazy SDK loader ──────────────────────────────────────────
 let _DLMM: any = null;
@@ -133,6 +135,17 @@ export async function deployPosition(args: Record<string, any>) {
       bin_step, volatility, fee_tvl_ratio, organic_score, amount_sol: finalAmountY, amount_x: finalAmountX,
       active_bin: activeBin.binId, initial_value_usd,
     });
+
+    // Capture and persist signal snapshot for Darwinian learning
+    const signalSnapshot = getAndClearStagedSignals(pool_address);
+    if (signalSnapshot) {
+      supabase.from("positions")
+        .update({ signal_snapshot: signalSnapshot })
+        .eq("id", newPosition.publicKey.toString())
+        .then(({ error }) => {
+          if (error) log("signal_tracker", `Failed to save signal_snapshot: ${error.message}`);
+        });
+    }
 
     const actualBinStep = pool.lbPair.binStep;
     const activePrice = parseFloat(activeBin.price);
