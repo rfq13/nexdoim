@@ -112,11 +112,22 @@ const toolMap: Record<string, (args: any) => any> = {
     }
     if (Object.keys(applied).length === 0) return { success: false, unknown, reason };
 
+    // Update in-memory config first
     for (const [key, val] of Object.entries(applied)) {
       const [section, field] = CONFIG_MAP[key];
       (config as any)[section][field] = val;
     }
-    await saveConfig({ ...applied, _lastAgentTune: new Date().toISOString() });
+
+    // Save to DB as nested sections (so deepMerge in loadConfig works correctly on restart)
+    const sectionsToSave = new Set<string>();
+    for (const key of Object.keys(applied)) {
+      sectionsToSave.add(CONFIG_MAP[key][0]);
+    }
+    const nestedSave: Record<string, unknown> = { _lastAgentTune: new Date().toISOString() };
+    for (const section of sectionsToSave) {
+      nestedSave[section] = { ...(config as any)[section] };
+    }
+    await saveConfig(nestedSave);
 
     const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;
     if (intervalChanged && _cronRestarter) _cronRestarter();
