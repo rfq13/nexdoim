@@ -44,10 +44,16 @@ export async function getWalletBalances() {
   let walletAddress: string;
   let wallet: Keypair;
   try {
-    wallet = await getWallet();
+    wallet = Keypair.fromSecretKey(bs58.decode(rawPk));
     walletAddress = wallet.publicKey.toString();
+    // Invalidate cached wallet if secret changed
+    if (_wallet && _wallet.publicKey.toString() !== walletAddress) {
+      _wallet = null;
+      _connection = null;
+    }
+    _wallet = wallet;
   } catch (e: any) {
-    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: `Wallet init error: ${e.message}` };
+    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: `Invalid private key format: ${e.message}` };
   }
 
   // Always fetch SOL balance directly via RPC — no Helius needed
