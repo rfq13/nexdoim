@@ -231,7 +231,7 @@ export default function ConfigPage() {
                   label={def.label}
                   description={def.description}
                   value={val}
-                  step={def.step}
+                  step={def.type === "number" ? def.step : undefined}
                   min={def.type === "number" ? def.min : undefined}
                   max={def.type === "number" ? def.max : undefined}
                   onChange={(v) => setField(section, key, v)}
