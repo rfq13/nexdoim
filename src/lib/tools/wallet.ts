@@ -36,44 +36,76 @@ export function normalizeMint(mint: string | undefined | null): string {
 
 export async function getWalletBalances() {
   let walletAddress: string;
-  try { 
-    const wallet = await getWallet();
-    walletAddress = wallet.publicKey.toString(); 
-  } catch {
-    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Wallet not configured" };
-  }
-
-  const HELIUS_KEY = await getSecret("HELIUS_API_KEY") || process.env.HELIUS_API_KEY;
-  if (!HELIUS_KEY) {
-    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Helius API key missing" };
-  }
-
+  let wallet: Keypair;
   try {
-    const url = `https://api.helius.xyz/v1/wallet/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Helius API error: ${res.status}`);
-    const data = await res.json();
-    const balances = data.balances || [];
-
-    const solEntry = balances.find((b: any) => b.mint === config.tokens.SOL || b.symbol === "SOL");
-    const usdcEntry = balances.find((b: any) => b.mint === config.tokens.USDC || b.symbol === "USDC");
-
-    return {
-      wallet: walletAddress,
-      sol: Math.round((solEntry?.balance || 0) * 1e6) / 1e6,
-      sol_price: Math.round((solEntry?.pricePerToken || 0) * 100) / 100,
-      sol_usd: Math.round((solEntry?.usdValue || 0) * 100) / 100,
-      usdc: Math.round((usdcEntry?.balance || 0) * 100) / 100,
-      tokens: balances.map((b: any) => ({
-        mint: b.mint, symbol: b.symbol || b.mint?.slice(0, 8),
-        balance: b.balance, usd: b.usdValue ? Math.round(b.usdValue * 100) / 100 : null,
-      })),
-      total_usd: Math.round((data.totalUsdValue || 0) * 100) / 100,
-    };
-  } catch (error: any) {
-    log("wallet_error", error.message);
-    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: error.message };
+    wallet = await getWallet();
+    walletAddress = wallet.publicKey.toString();
+  } catch (e: any) {
+    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "WALLET_PRIVATE_KEY belum dikonfigurasi di /secrets" };
   }
+
+  // Always fetch SOL balance directly via RPC — no Helius needed
+  let solLamports = 0;
+  try {
+    const conn = await getConnection();
+    solLamports = await conn.getBalance(wallet.publicKey);
+  } catch (e: any) {
+    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: `RPC error: ${e.message}` };
+  }
+  const solBalance = Math.round(solLamports / 1e9 * 1e6) / 1e6;
+
+  // Try Helius for enriched data (token balances + USD price) — optional
+  const HELIUS_KEY = await getSecret("HELIUS_API_KEY") || process.env.HELIUS_API_KEY;
+  if (HELIUS_KEY) {
+    try {
+      const url = `https://api.helius.xyz/v0/addresses/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const nativeBalance = data.nativeBalance ?? solLamports;
+        const tokens: any[] = data.tokens ?? [];
+
+        const solPrice = await fetchSolPrice().catch(() => 0);
+        const solUsd = Math.round((nativeBalance / 1e9) * solPrice * 100) / 100;
+
+        const usdcEntry = tokens.find((t: any) => t.mint === config.tokens.USDC);
+
+        return {
+          wallet: walletAddress,
+          sol: Math.round(nativeBalance / 1e9 * 1e6) / 1e6,
+          sol_price: Math.round(solPrice * 100) / 100,
+          sol_usd: solUsd,
+          usdc: Math.round((usdcEntry?.amount / 1e6 || 0) * 100) / 100,
+          tokens: tokens.map((t: any) => ({
+            mint: t.mint,
+            symbol: t.tokenAccount || t.mint?.slice(0, 8),
+            balance: t.amount / Math.pow(10, t.decimals ?? 9),
+            usd: null,
+          })),
+          total_usd: solUsd,
+        };
+      }
+    } catch { /* fall through to basic result */ }
+  }
+
+  // Fallback: only SOL from RPC, no token data
+  const solPrice = await fetchSolPrice().catch(() => 0);
+  return {
+    wallet: walletAddress,
+    sol: solBalance,
+    sol_price: Math.round(solPrice * 100) / 100,
+    sol_usd: Math.round(solBalance * solPrice * 100) / 100,
+    usdc: 0,
+    tokens: [],
+    total_usd: Math.round(solBalance * solPrice * 100) / 100,
+  };
+}
+
+async function fetchSolPrice(): Promise<number> {
+  const res = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112", { signal: AbortSignal.timeout(4000) });
+  if (!res.ok) return 0;
+  const data = await res.json();
+  return parseFloat(data?.data?.["So11111111111111111111111111111111111111112"]?.price ?? "0");
 }
 
 export async function swapToken({ input_mint, output_mint, amount }: { input_mint: string; output_mint: string; amount: number }) {

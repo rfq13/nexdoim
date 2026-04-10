@@ -197,6 +197,26 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Wallet error banner */}
+      {wallet?.error && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-400">
+          <span className="text-base leading-none mt-0.5">⚠</span>
+          <div>
+            <span className="font-medium">Wallet error: </span>{wallet.error}
+            {!wallet.wallet && (
+              <span> — Buka <a href="/secrets" className="underline hover:text-red-300">/secrets</a> dan isi WALLET_PRIVATE_KEY</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Wallet address */}
+      {wallet?.wallet && (
+        <div className="text-xs text-(--muted) font-mono truncate">
+          Wallet: {wallet.wallet}
+        </div>
+      )}
+
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="SOL Balance" value={`${sol.toFixed(3)} SOL`} sub={`≈ $${solUsd.toFixed(0)}`} />
@@ -377,7 +397,7 @@ export default function Dashboard() {
                 return (
                   <div key={p.position} className="space-y-0.5">
                     <div className="flex justify-between text-xs text-(--muted)">
-                      <span className="truncate max-w-[160px]">{p.pair}</span>
+                      <span className="truncate max-w-40">{p.pair}</span>
                       <span className="flex items-center gap-2">
                         <span className={`px-1.5 rounded text-[10px] ${p.in_range ? "bg-green-900/30 text-(--green)" : "bg-red-900/30 text-(--red)"}`}>
                           {p.in_range ? "IN" : "OOR"}
