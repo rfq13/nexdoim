@@ -1,7 +1,7 @@
 import { Ollama } from "ollama";
 import { config, getSecret } from "./config";
 
-const DEFAULT_OLLAMA_HOST = "https://ollama.com";
+const DEFAULT_OLLAMA_HOST = "https://ollama.com/api";
 const DEFAULT_OLLAMA_MODEL = "gpt-oss:120b";
 
 export async function getOllamaHost(): Promise<string> {
