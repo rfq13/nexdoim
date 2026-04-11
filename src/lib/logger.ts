@@ -1,3 +1,5 @@
+import { captureLog } from "./run-context";
+
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const LEVELS: Record<string, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 const currentLevel = LEVELS[LOG_LEVEL] || 1;
@@ -12,6 +14,7 @@ export function log(category: string, message: string) {
   const timestamp = new Date().toISOString();
   const line = `[${timestamp}] [${category.toUpperCase()}] ${message}`;
   console.log(line);
+  captureLog(category, message);
 }
 
 export function logAction(action: {

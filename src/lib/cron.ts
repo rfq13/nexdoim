@@ -16,6 +16,8 @@ import { sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, 
 import { registerCronRestarter } from "./tools/executor";
 import { getPerformanceSummary } from "./lessons";
 import { stageSignals } from "./signal-tracker";
+import { runStorage, type LogEntry, type RunContext } from "./run-context";
+import { supabase } from "./db";
 
 // ─── Market Context ──────────────────────────────────────────
 async function getMarketContext(): Promise<string> {
@@ -81,30 +83,131 @@ function initJob(name: string, schedule: string, intervalMin: number | null): Jo
   return _jobHealth[name];
 }
 
+async function persistRun(record: {
+  job_name: string;
+  started_at: number;
+  ended_at: number;
+  duration_ms: number;
+  success: boolean;
+  error: string | null;
+  output: string | null;
+  logs: LogEntry[];
+}) {
+  try {
+    await supabase.from("cron_runs").insert({
+      job_name: record.job_name,
+      started_at: new Date(record.started_at).toISOString(),
+      ended_at: new Date(record.ended_at).toISOString(),
+      duration_ms: record.duration_ms,
+      success: record.success,
+      error: record.error,
+      output: record.output,
+      logs: record.logs,
+    });
+  } catch (e: any) {
+    // Never let persistence failure break the cron loop
+    console.error(`[cron] failed to persist run for ${record.job_name}: ${e?.message ?? e}`);
+  }
+}
+
+function stringifyOutput(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && "content" in (value as any)) {
+    return String((value as any).content);
+  }
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
 async function trackRun<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
   const job = _jobHealth[name];
   if (!job) return await fn();
+
   job.busy = true;
   const start = Date.now();
-  try {
-    const result = await fn();
-    job.lastRunAt = start;
-    job.lastDurationMs = Date.now() - start;
-    job.lastSuccess = true;
-    job.lastError = null;
-    job.runCount++;
-    return result;
-  } catch (e: any) {
-    job.lastRunAt = start;
-    job.lastDurationMs = Date.now() - start;
-    job.lastSuccess = false;
-    job.lastError = e?.message ?? String(e);
-    job.errorCount++;
-    log("cron_error", `${name} failed: ${job.lastError}`);
-    return null;
-  } finally {
-    job.busy = false;
-  }
+  const ctx: RunContext = { jobName: name, logs: [] };
+
+  return runStorage.run(ctx, async () => {
+    try {
+      const result = await fn();
+      const end = Date.now();
+      job.lastRunAt = start;
+      job.lastDurationMs = end - start;
+      job.lastSuccess = true;
+      job.lastError = null;
+      job.runCount++;
+
+      await persistRun({
+        job_name: name,
+        started_at: start,
+        ended_at: end,
+        duration_ms: end - start,
+        success: true,
+        error: null,
+        output: stringifyOutput(result),
+        logs: ctx.logs,
+      });
+
+      return result;
+    } catch (e: any) {
+      const end = Date.now();
+      const errMsg = e?.message ?? String(e);
+      job.lastRunAt = start;
+      job.lastDurationMs = end - start;
+      job.lastSuccess = false;
+      job.lastError = errMsg;
+      job.errorCount++;
+      log("cron_error", `${name} failed: ${errMsg}`);
+
+      await persistRun({
+        job_name: name,
+        started_at: start,
+        ended_at: end,
+        duration_ms: end - start,
+        success: false,
+        error: errMsg,
+        output: null,
+        logs: ctx.logs,
+      });
+
+      return null;
+    } finally {
+      job.busy = false;
+    }
+  });
+}
+
+// ─── Manual Triggers ─────────────────────────────────────────
+// Fire-and-forget entry points for the API routes. These wrap the
+// cycle with trackRun so a DB row in `cron_runs` is created — the
+// HTTP caller polls /api/cron/runs to read the result, avoiding
+// Heroku's 30-second router timeout (H12).
+
+export function triggerManagement(): number {
+  const triggeredAt = Date.now();
+  (async () => {
+    if (_managementBusy) {
+      log("cron", "Manual management trigger skipped — already running");
+      // Still persist so the UI poll finds a row
+      await trackRun("management", async () => "SKIPPED: management sebelumnya masih berjalan — tunggu hingga selesai");
+      return;
+    }
+    _managementBusy = true;
+    try {
+      await trackRun("management", () => runManagementCycle({ silent: true }));
+    } finally {
+      _managementBusy = false;
+    }
+  })().catch((e: any) => log("cron_error", `triggerManagement failed: ${e?.message ?? e}`));
+  return triggeredAt;
+}
+
+export function triggerScreening(): number {
+  const triggeredAt = Date.now();
+  (async () => {
+    await trackRun("screening", () => runScreeningCycle({ silent: true }));
+  })().catch((e: any) => log("cron_error", `triggerScreening failed: ${e?.message ?? e}`));
+  return triggeredAt;
 }
 
 export function getCronStatus() {
@@ -129,7 +232,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     if (positions.length === 0) {
       log("cron", "No open positions — triggering screening");
       runScreeningCycle().catch((e: any) => log("cron_error", `Triggered screening failed: ${e.message}`));
-      return;
+      return "SKIPPED: tidak ada posisi terbuka — screening di-trigger otomatis";
     }
 
     // Trigger screening if under max positions
@@ -176,19 +279,24 @@ export async function runManagementCycle({ silent = false } = {}) {
 }
 
 export async function runScreeningCycle({ silent = false } = {}) {
-  if (_screeningBusy) return;
+  if (_screeningBusy) {
+    log("cron", "Screening skipped — already running");
+    return "SKIPPED: screening sebelumnya masih berjalan — tunggu hingga selesai";
+  }
 
   // Circuit breaker: pause if on losing streak
   try {
     const perf = await getPerformanceSummary();
     if (perf && perf.total_positions_closed >= 5) {
       if (perf.win_rate_pct < 25) {
-        log("cron", `Circuit breaker: win rate ${perf.win_rate_pct}% < 25% over ${perf.total_positions_closed} positions — screening paused`);
-        return;
+        const msg = `Circuit breaker: win rate ${perf.win_rate_pct}% < 25% over ${perf.total_positions_closed} positions — screening paused`;
+        log("cron", msg);
+        return `SKIPPED: ${msg}`;
       }
       if (perf.recent_streak.losses >= 4) {
-        log("cron", `Circuit breaker: ${perf.recent_streak.losses} consecutive losses — screening paused`);
-        return;
+        const msg = `Circuit breaker: ${perf.recent_streak.losses} consecutive losses — screening paused`;
+        log("cron", msg);
+        return `SKIPPED: ${msg}`;
       }
     }
   } catch { /* continue if perf check fails */ }
@@ -196,9 +304,22 @@ export async function runScreeningCycle({ silent = false } = {}) {
   let prePositions: any, preBalance: any;
   try {
     [prePositions, preBalance] = await Promise.all([getMyPositions(), getWalletBalances()]);
-    if (prePositions.total_positions >= config.risk.maxPositions) { log("cron", "Screening skipped — max positions"); return; }
-    if (preBalance.sol < config.management.deployAmountSol + config.management.gasReserve) { log("cron", "Screening skipped — insufficient SOL"); return; }
-  } catch (e: any) { log("cron_error", `Pre-check failed: ${e.message}`); return; }
+    if (prePositions.total_positions >= config.risk.maxPositions) {
+      const msg = `Max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`;
+      log("cron", `Screening skipped — ${msg}`);
+      return `SKIPPED: ${msg}`;
+    }
+    const minSol = config.management.deployAmountSol + config.management.gasReserve;
+    if (preBalance.sol < minSol) {
+      const msg = `Saldo SOL tidak cukup: ${preBalance.sol.toFixed(4)} < ${minSol.toFixed(4)} (deploy ${config.management.deployAmountSol} + reserve ${config.management.gasReserve})`;
+      log("cron", `Screening skipped — ${msg}`);
+      return `SKIPPED: ${msg}`;
+    }
+  } catch (e: any) {
+    const msg = `Pre-check gagal: ${e.message}`;
+    log("cron_error", msg);
+    return `ERROR: ${msg}`;
+  }
 
   _screeningBusy = true;
   log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
