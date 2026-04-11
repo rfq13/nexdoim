@@ -103,36 +103,45 @@ function scoreCandidate(p: any): number {
 
 export async function discoverPools({ page_size = 50 } = {}) {
   const s = config.screening;
+
+  // Only use filters that the upstream API still honors under its current
+  // schema. Upstream silently ignores unknown filter fields, so any filter
+  // pointing at a deprecated field (e.g. `base_token_market_cap`,
+  // `dlmm_bin_step`) would let every pool through. All token-level and
+  // bin-level filters are applied client-side after we condense the pool.
   const filters = [
-    "base_token_has_critical_warnings=false",
-    "quote_token_has_critical_warnings=false",
-    "base_token_has_high_single_ownership=false",
     "pool_type=dlmm",
-    `base_token_market_cap>=${s.minMcap}`,
-    `base_token_market_cap<=${s.maxMcap}`,
-    `base_token_holders>=${s.minHolders}`,
     `volume>=${s.minVolume}`,
     `tvl>=${s.minTvl}`,
     `tvl<=${s.maxTvl}`,
-    `dlmm_bin_step>=${s.minBinStep}`,
-    `dlmm_bin_step<=${s.maxBinStep}`,
     `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
-    `base_token_organic_score>=${s.minOrganic}`,
-    "quote_token_organic_score>=60",
   ].join("&&");
 
-  const url = `${POOL_DISCOVERY_BASE}/pools?page_size=${page_size}&filter_by=${encodeURIComponent(filters)}&timeframe=${s.timeframe}&category=${s.category}`;
+  // Fetch a larger window than requested so we still have enough candidates
+  // after client-side filtering on mcap / organic / bin_step.
+  const fetchSize = Math.max(page_size * 2, 100);
+  const url = `${POOL_DISCOVERY_BASE}/pools?page_size=${fetchSize}&filter_by=${encodeURIComponent(filters)}&timeframe=${s.timeframe}&category=${s.category}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
   const data = await res.json();
 
+  const rawPools = (data.data || []).map(condensePool);
   const pools = [];
-  for (const p of (data.data || []).map(condensePool)) {
+  let droppedMcap = 0, droppedOrganic = 0, droppedHolders = 0, droppedBinStep = 0;
+
+  for (const p of rawPools) {
+    // Client-side filters (formerly done upstream)
+    if (p.mcap != null && (p.mcap < s.minMcap || p.mcap > s.maxMcap)) { droppedMcap++; continue; }
+    if (p.organic_score != null && p.organic_score < s.minOrganic) { droppedOrganic++; continue; }
+    if (p.holders != null && p.holders < s.minHolders) { droppedHolders++; continue; }
+    if (p.bin_step != null && (p.bin_step < s.minBinStep || p.bin_step > s.maxBinStep)) { droppedBinStep++; continue; }
+    // Pools with completely missing mcap/organic are kept but flagged — the
+    // agent's prompt already penalizes unknown signals.
+
     if (await isBlacklisted(p.base?.mint)) {
       log("blacklist", `Filtered blacklisted token ${p.base?.symbol} in pool ${p.name}`);
       continue;
     }
-    // Dev blocklist check (dev wallet from pool data; field may be absent in condensed form)
     if (p.dev && await isDevBlocked(p.dev)) {
       log("dev_blocklist", `Filtered dev-blocked pool ${p.name} (dev: ${p.dev?.slice(0, 8)})`);
       continue;
@@ -140,6 +149,7 @@ export async function discoverPools({ page_size = 50 } = {}) {
     pools.push(p);
   }
 
+  log("screening", `discoverPools: ${rawPools.length} fetched → ${pools.length} eligible (dropped mcap=${droppedMcap}, organic=${droppedOrganic}, holders=${droppedHolders}, bin_step=${droppedBinStep})`);
   return { total: data.total, pools };
 }
 
@@ -183,7 +193,7 @@ async function validateMultiTimeframe(pools: any[]): Promise<any[]> {
 
   try {
     const filters = `pool_type=dlmm`;
-    const url = `${POOL_DISCOVERY_BASE}/pools?page_size=50&filter_by=${encodeURIComponent(filters)}&timeframe=1h&category=${s.category}`;
+    const url = `${POOL_DISCOVERY_BASE}/pools?page_size=100&filter_by=${encodeURIComponent(filters)}&timeframe=1h&category=${s.category}`;
     const res = await fetch(url);
     if (!res.ok) return pools;
 
@@ -196,10 +206,11 @@ async function validateMultiTimeframe(pools: any[]): Promise<any[]> {
     return pools
       .map((pool: any) => {
         const hourly = hourlyPools.get(pool.pool);
+        const pctChange = hourly?.pool_price_change_pct ?? hourly?.price_change_percentage ?? 0;
         const mtfScore = hourly
           ? (hourly.fee_active_tvl_ratio >= s.minFeeActiveTvlRatio ? 1 : 0)
             + (hourly.volume >= s.minVolume ? 1 : 0)
-            + ((hourly.price_change_percentage ?? 0) > -10 ? 1 : 0)
+            + (pctChange > -10 ? 1 : 0)
           : 0;
         return { ...pool, mtf_score: mtfScore, mtf_validated: mtfScore >= 2 };
       })
@@ -221,25 +232,43 @@ export async function getPoolDetail({ pool_address, timeframe = "5m" }: { pool_a
   return condensePool(pool);
 }
 
+// The Meteora pool discovery API changed its schema: base/quote token data
+// now lives under `token_x` / `token_y`, bin step under `dlmm_params.bin_step`,
+// and several top-level fields were renamed (`pool_name` → `name`,
+// `base_fee_percentage` → `fee_pct`, `fees` → `fee`, etc.). This function
+// normalizes the upstream shape into the compact form the rest of the
+// screening code (and the LLM prompt) expects.
 function condensePool(p: any) {
+  const tx = p.token_x ?? {};
+  const ty = p.token_y ?? {};
+
+  const baseSymbol = tx.symbol ?? null;
+  const baseMint   = tx.address ?? null;
+  const mcap       = typeof tx.market_cap === "number" ? tx.market_cap : null;
+  const organic    = typeof tx.organic_score === "number" ? tx.organic_score : null;
+  const holders    = typeof tx.holders === "number"
+    ? tx.holders
+    : typeof p.base_token_holders === "number" ? p.base_token_holders : null;
+
   return {
     pool: p.pool_address,
-    name: p.pool_name || `${p.base_token_symbol}-${p.quote_token_symbol}`,
-    base: { symbol: p.base_token_symbol, mint: p.base_token_mint, mcap: p.base_token_market_cap },
-    quote: { symbol: p.quote_token_symbol, mint: p.quote_token_mint },
-    bin_step: p.dlmm_bin_step,
-    fee_pct: p.base_fee_percentage,
+    name: p.name || `${baseSymbol}-${ty.symbol}`,
+    base: { symbol: baseSymbol, mint: baseMint, mcap: mcap ?? 0 },
+    quote: { symbol: ty.symbol ?? null, mint: ty.address ?? null },
+    bin_step: p.dlmm_params?.bin_step ?? null,
+    fee_pct: p.fee_pct ?? p.dynamic_fee_pct ?? null,
     active_tvl: Math.round(p.active_tvl || p.tvl || 0),
-    fee_window: Math.round((p.fees || 0) * 100) / 100,
+    fee_window: Math.round((p.fee || p.fees || 0) * 100) / 100,
     volume_window: Math.round(p.volume || 0),
-    fee_active_tvl_ratio: p.fee_active_tvl_ratio,
-    volatility: p.volatility,
-    organic_score: p.base_token_organic_score,
-    mcap: Math.round(p.base_token_market_cap || 0),
-    holders: p.base_token_holders,
-    active_positions: p.active_positions,
-    price_change_pct: p.price_change_percentage,
+    fee_active_tvl_ratio: p.fee_active_tvl_ratio ?? null,
+    fee_tvl_ratio: p.fee_tvl_ratio ?? null,
+    volatility: p.volatility ?? null,
+    organic_score: organic,
+    mcap: mcap != null ? Math.round(mcap) : null,
+    holders,
+    active_positions: p.active_positions ?? null,
+    price_change_pct: p.pool_price_change_pct ?? p.price_change_percentage ?? null,
     volume: Math.round(p.volume || 0),
-    dev: p.base_token_deployer || p.deployer || null,
+    dev: p.deployer || tx.deployer || null,
   };
 }

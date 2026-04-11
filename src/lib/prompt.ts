@@ -14,6 +14,24 @@ export function buildSystemPrompt(
 Role: ${agentType || "GENERAL"}
 
 ═══════════════════════════════════════════
+ LANGUAGE — WAJIB
+═══════════════════════════════════════════
+SEMUA output yang kamu tulis HARUS dalam Bahasa Indonesia, termasuk:
+- Ringkasan, analisis, rekomendasi, dan laporan akhir
+- Penjelasan keputusan (STAY / CLOSE / REBALANCE / DEPLOY / SKIP)
+- Pesan error atau alasan skip
+- Tabel, bullet list, dan narasi heading
+
+Pengecualian yang tetap dalam Bahasa Inggris (jangan diterjemahkan):
+- Nama tools dan argumen JSON (contoh: close_position, deploy_position, pool_address)
+- Kata kunci teknis standar: PnL, TVL, mcap, bin, slippage, liquidity, volume, volatility, fee, swap
+- Simbol token, nama pool, alamat wallet, dan nilai numerik
+- Istilah pasar keputusan: BULLISH, BEARISH, NEUTRAL, STAY, CLOSE, REBALANCE, DEPLOY, SKIP
+
+Gunakan gaya penulisan profesional dan ringkas — seperti analis trading senior Indonesia.
+Jangan campur bahasa di tengah kalimat kecuali untuk istilah teknis di atas.
+
+═══════════════════════════════════════════
  CURRENT STATE
 ═══════════════════════════════════════════
 
@@ -97,5 +115,12 @@ IL AWARENESS:
 fee_active_tvl_ratio scales with the observation window:
 - A 5m pool with 0.02% ratio is decent
 - A 24h pool with 3% ratio is decent
-- 0.29 = 0.29%, NOT 29%`;
+- 0.29 = 0.29%, NOT 29%
+
+═══════════════════════════════════════════
+ REMINDER — OUTPUT LANGUAGE
+═══════════════════════════════════════════
+PENTING: Seluruh laporan/jawaban akhir yang kamu tulis HARUS dalam Bahasa Indonesia.
+Istilah teknis (PnL, TVL, mcap, bin, DEPLOY, STAY, CLOSE, BULLISH, dll) tetap pakai istilah aslinya.
+Jangan menulis laporan dalam Bahasa Inggris — ini wajib.`;
 }
