@@ -48,6 +48,48 @@ function Markdown({ text }: { text: string }) {
       continue;
     }
 
+    // Table
+    if (/^\|/.test(line)) {
+      const tableLines: string[] = [];
+      while (i < lines.length && /^\|/.test(lines[i])) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      // Filter out separator rows (---|---)
+      const rows = tableLines.filter((l) => !/^\|[\s|:-]+\|$/.test(l.trim()));
+      const [headerRow, ...bodyRows] = rows;
+      const parseRow = (row: string) =>
+        row.split("|").map((c) => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+      const headers = parseRow(headerRow);
+      elements.push(
+        <div key={i} className="overflow-x-auto my-2">
+          <table className="text-xs w-full border-collapse">
+            <thead>
+              <tr>
+                {headers.map((h, j) => (
+                  <th key={j} className="border border-[var(--border)] px-2 py-1 text-left font-semibold bg-black/30 whitespace-nowrap">
+                    {renderInline(h)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, ri) => (
+                <tr key={ri} className="even:bg-black/20">
+                  {parseRow(row).map((cell, ci) => (
+                    <td key={ci} className="border border-[var(--border)] px-2 py-1 font-mono">
+                      {renderInline(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
     // Bullet list
     if (/^[-*] /.test(line)) {
       const items: string[] = [];
