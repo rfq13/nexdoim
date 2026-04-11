@@ -46,6 +46,78 @@ let _managementBusy = false;
 let _screeningBusy = false;
 let _screeningLastTriggered = 0;
 
+// ─── Health tracking ─────────────────────────────────────────
+interface JobHealth {
+  name: string;
+  schedule: string;
+  intervalMin: number | null; // null = not an interval-based job
+  lastRunAt: number | null;
+  lastDurationMs: number | null;
+  lastError: string | null;
+  lastSuccess: boolean | null;
+  runCount: number;
+  errorCount: number;
+  busy: boolean;
+}
+
+const _jobHealth: Record<string, JobHealth> = {};
+const _processStartedAt = Date.now();
+
+function initJob(name: string, schedule: string, intervalMin: number | null): JobHealth {
+  if (!_jobHealth[name]) {
+    _jobHealth[name] = {
+      name,
+      schedule,
+      intervalMin,
+      lastRunAt: null,
+      lastDurationMs: null,
+      lastError: null,
+      lastSuccess: null,
+      runCount: 0,
+      errorCount: 0,
+      busy: false,
+    };
+  }
+  return _jobHealth[name];
+}
+
+async function trackRun<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
+  const job = _jobHealth[name];
+  if (!job) return await fn();
+  job.busy = true;
+  const start = Date.now();
+  try {
+    const result = await fn();
+    job.lastRunAt = start;
+    job.lastDurationMs = Date.now() - start;
+    job.lastSuccess = true;
+    job.lastError = null;
+    job.runCount++;
+    return result;
+  } catch (e: any) {
+    job.lastRunAt = start;
+    job.lastDurationMs = Date.now() - start;
+    job.lastSuccess = false;
+    job.lastError = e?.message ?? String(e);
+    job.errorCount++;
+    log("cron_error", `${name} failed: ${job.lastError}`);
+    return null;
+  } finally {
+    job.busy = false;
+  }
+}
+
+export function getCronStatus() {
+  return {
+    running: _cronTasks.length > 0,
+    task_count: _cronTasks.length,
+    process_started_at: _processStartedAt,
+    process_uptime_sec: Math.floor((Date.now() - _processStartedAt) / 1000),
+    now: Date.now(),
+    jobs: Object.values(_jobHealth),
+  };
+}
+
 export async function runManagementCycle({ silent = false } = {}) {
   log("cron", `Starting management cycle [model: ${config.llm.managementModel}]`);
   let mgmtReport: string | null = null;
@@ -226,24 +298,39 @@ async function maybeRunMissedBriefing() {
 export function startCronJobs() {
   stopCronJobs();
 
-  const mgmtTask = cron.schedule(`*/${Math.max(1, config.schedule.managementIntervalMin)} * * * *`, async () => {
+  const mgmtInterval = Math.max(1, config.schedule.managementIntervalMin);
+  const screenInterval = Math.max(1, config.schedule.screeningIntervalMin);
+
+  // Register job health entries (idempotent)
+  initJob("management", `*/${mgmtInterval} * * * *`, mgmtInterval);
+  initJob("screening", `*/${screenInterval} * * * *`, screenInterval);
+  initJob("health_check", `0 * * * *`, 60);
+  initJob("morning_briefing", `0 1 * * *`, null);
+  initJob("briefing_watchdog", `0 */6 * * *`, 360);
+
+  const mgmtTask = cron.schedule(`*/${mgmtInterval} * * * *`, async () => {
     if (_managementBusy) return;
     _managementBusy = true;
-    try { await runManagementCycle(); } finally { _managementBusy = false; }
+    try { await trackRun("management", () => runManagementCycle()); }
+    finally { _managementBusy = false; }
   });
 
-  const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, () => { runScreeningCycle(); });
+  const screenTask = cron.schedule(`*/${screenInterval} * * * *`, () => {
+    trackRun("screening", () => runScreeningCycle());
+  });
 
   const healthTask = cron.schedule(`0 * * * *`, async () => {
     if (_managementBusy) return;
     _managementBusy = true;
-    try { await agentLoop("HEALTH CHECK — summarize portfolio health.", config.llm.maxSteps, [], "MANAGER"); }
-    catch (e: any) { log("cron_error", `Health check failed: ${e.message}`); }
-    finally { _managementBusy = false; }
+    try {
+      await trackRun("health_check", () =>
+        agentLoop("HEALTH CHECK — summarize portfolio health.", config.llm.maxSteps, [], "MANAGER")
+      );
+    } finally { _managementBusy = false; }
   });
 
-  const briefingTask = cron.schedule(`0 1 * * *`, runBriefing, { timezone: "UTC" });
-  const briefingWatchdog = cron.schedule(`0 */6 * * *`, maybeRunMissedBriefing, { timezone: "UTC" });
+  const briefingTask = cron.schedule(`0 1 * * *`, () => { trackRun("morning_briefing", () => runBriefing()); }, { timezone: "UTC" });
+  const briefingWatchdog = cron.schedule(`0 */6 * * *`, () => { trackRun("briefing_watchdog", () => maybeRunMissedBriefing()); }, { timezone: "UTC" });
 
   _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
   log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
