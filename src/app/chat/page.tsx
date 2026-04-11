@@ -196,8 +196,24 @@ export default function ChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userMsg, role, model: selectedModel || null }),
       });
-      const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", content: data.content || data.error || "No response" }]);
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          // Skip SSE comments (keep-alive pings like ": ping")
+          if (!part.startsWith("data: ")) continue;
+          const data = JSON.parse(part.slice(6));
+          setMessages((prev) => [...prev, { role: "assistant", content: data.content || data.error || "No response" }]);
+        }
+      }
     } catch (e: any) {
       setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${e.message}` }]);
     } finally {
