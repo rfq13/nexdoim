@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import NavBar from "@/components/NavBar";
 import "./globals.css";
+// Auto-start the scheduler when the app is loaded in `next dev` mode.
+// In production (`npm start`), server.ts also calls initCron() — the
+// globalThis guard in initCron() makes the double-call a no-op.
+import "@/lib/cron-auto-init";
 
 export const metadata: Metadata = {
   title: "Meridian — DLMM LP Agent",

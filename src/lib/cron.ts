@@ -342,6 +342,15 @@ export function stopCronJobs() {
 }
 
 export async function initCron() {
+  // Idempotent guard — tolerate double-call from both server.ts and
+  // lazy auto-init in dev mode (next dev doesn't run server.ts).
+  const g = globalThis as any;
+  if (g.__meridian_cron_started) {
+    log("cron", "initCron called but already started — skipping");
+    return;
+  }
+  g.__meridian_cron_started = true;
+
   registerCronRestarter(() => startCronJobs());
   startCronJobs();
   await maybeRunMissedBriefing().catch(() => {});

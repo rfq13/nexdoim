@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { Markdown } from "@/components/Markdown";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -419,10 +420,7 @@ export default function Dashboard() {
       </div>
 
       {/* Actions */}
-      <div className="flex gap-3 pt-1">
-        <ActionButton label="Run Screening" endpoint="/api/agent/screen" />
-        <ActionButton label="Run Management" endpoint="/api/agent/manage" />
-      </div>
+      <ActionPanel />
     </div>
   );
 }
@@ -458,35 +456,122 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-function ActionButton({ label, endpoint }: { label: string; endpoint: string }) {
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+interface RunResult {
+  action: "screening" | "management";
+  success: boolean;
+  content: string;
+  at: number;
+}
 
-  const run = async () => {
-    setLoading(true);
+function ActionPanel() {
+  const [running, setRunning] = useState<"screening" | "management" | null>(null);
+  const [result, setResult] = useState<RunResult | null>(null);
+
+  const run = async (action: "screening" | "management") => {
+    if (running) return;
+    setRunning(action);
     setResult(null);
     try {
+      const endpoint = action === "screening" ? "/api/agent/screen" : "/api/agent/manage";
       const res = await fetch(endpoint, { method: "POST" });
       const data = await res.json();
-      setResult(data.report || data.error || "Selesai");
+      const content = data.report || data.error || "Selesai — tidak ada output.";
+      setResult({ action, success: data.success !== false, content, at: Date.now() });
     } catch (e: any) {
-      setResult(e.message);
+      setResult({ action, success: false, content: e.message || "Request gagal", at: Date.now() });
     } finally {
-      setLoading(false);
+      setRunning(null);
     }
   };
 
   return (
-    <div>
-      <button
-        onClick={run}
-        disabled={loading}
-        className="px-4 py-2 bg-(--accent) text-white rounded-lg hover:opacity-90 disabled:opacity-50 text-sm transition-opacity"
-      >
-        {loading ? "Running..." : label}
-      </button>
+    <div className="pt-1 space-y-3">
+      {/* Action buttons */}
+      <div className="flex gap-2 flex-wrap">
+        <button
+          onClick={() => run("screening")}
+          disabled={running !== null}
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-all bg-green-500/15 text-green-300 border border-green-500/30 hover:bg-green-500/25 hover:border-green-500/50 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+        >
+          {running === "screening" ? (
+            <>
+              <span className="w-3 h-3 rounded-full bg-green-400 animate-pulse" />
+              Screening berjalan...
+            </>
+          ) : (
+            <>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+              </svg>
+              Run Screening
+            </>
+          )}
+        </button>
+        <button
+          onClick={() => run("management")}
+          disabled={running !== null}
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-all bg-blue-500/15 text-blue-300 border border-blue-500/30 hover:bg-blue-500/25 hover:border-blue-500/50 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+        >
+          {running === "management" ? (
+            <>
+              <span className="w-3 h-3 rounded-full bg-blue-400 animate-pulse" />
+              Management berjalan...
+            </>
+          ) : (
+            <>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /><path d="M12 6v6l4 2" />
+              </svg>
+              Run Management
+            </>
+          )}
+        </button>
+        {running && (
+          <div className="text-xs text-(--muted) self-center pl-1">
+            Agent sedang memproses — ini butuh 30–90 detik.
+          </div>
+        )}
+      </div>
+
+      {/* Result panel */}
       {result && (
-        <pre className="mt-2 text-xs text-(--muted) max-w-lg whitespace-pre-wrap">{result}</pre>
+        <div className={`bg-(--card) border rounded-xl overflow-hidden ${
+          result.success ? "border-(--border)" : "border-red-500/40"
+        }`}>
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-(--border) bg-black/20">
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold ${
+                result.action === "screening"
+                  ? "bg-green-500/15 text-green-400"
+                  : "bg-blue-500/15 text-blue-400"
+              }`}>
+                {result.action === "screening" ? "SCREENING" : "MANAGEMENT"}
+              </span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold ${
+                result.success
+                  ? "bg-green-500/15 text-green-400"
+                  : "bg-red-500/15 text-red-400"
+              }`}>
+                {result.success ? "DONE" : "ERROR"}
+              </span>
+              <span className="text-xs text-(--muted)">
+                {new Date(result.at).toLocaleTimeString()}
+              </span>
+            </div>
+            <button
+              onClick={() => setResult(null)}
+              className="text-(--muted) hover:text-(--text) transition-colors p-1 rounded"
+              title="Tutup"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="px-4 py-3 max-h-[500px] overflow-y-auto">
+            <Markdown text={result.content} />
+          </div>
+        </div>
       )}
     </div>
   );
