@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "node --import tsx/esm server.ts"
+    "start": "node --import ./register-hooks.mjs --import tsx/esm server.ts"
   },
   "dependencies": {
     "@meteora-ag/dlmm": "latest",
