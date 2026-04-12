@@ -148,6 +148,58 @@ export async function notifyOutOfRange({ pair, minutesOOR }: any) {
   );
 }
 
+export async function notifyPendingDecision({
+  id,
+  action,
+  poolName,
+  poolAddress,
+  amountSol,
+  strategy,
+  binsBelow,
+  binsAbove,
+  reason,
+  risks,
+  expiresInMin,
+}: {
+  id: number;
+  action: "deploy" | "close";
+  poolName?: string | null;
+  poolAddress?: string | null;
+  amountSol?: number;
+  strategy?: string;
+  binsBelow?: number;
+  binsAbove?: number;
+  reason?: string | null;
+  risks?: string[] | null;
+  expiresInMin?: number;
+}) {
+  const title = action === "deploy" ? "Deploy" : "Close";
+  const emoji = action === "deploy" ? "🔔" : "🛑";
+  const pool = poolName || poolAddress?.slice(0, 12) || "?";
+  const lines = [
+    `${emoji} <b>Konfirmasi ${title}</b> — <code>#${id}</code>`,
+    `Pool: <b>${pool}</b>`,
+  ];
+  if (action === "deploy") {
+    if (amountSol != null) lines.push(`Amount: ${amountSol} SOL`);
+    if (strategy) lines.push(`Strategy: ${strategy}`);
+    if (binsBelow != null || binsAbove != null) {
+      lines.push(`Bins: below=${binsBelow ?? "?"}, above=${binsAbove ?? "?"}`);
+    }
+  }
+  if (reason) lines.push(`Alasan: ${reason}`);
+  if (risks && risks.length > 0) {
+    lines.push(`Risks:`);
+    for (const r of risks.slice(0, 5)) lines.push(`  • ${r}`);
+  }
+  if (expiresInMin != null) lines.push(`\n<i>Expires in ${expiresInMin} min</i>`);
+  lines.push("");
+  lines.push(`Reply <code>/approve ${id}</code> atau <code>/reject ${id}</code>`);
+  lines.push(`Atau konfirmasi via web dashboard.`);
+
+  await sendHTML(lines.join("\n"));
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }

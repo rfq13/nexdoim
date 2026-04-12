@@ -104,7 +104,32 @@ SCREENING — SKIP when:
   - Token deployer appears in recent CLOSE decisions with losses
   - Same pool or token appeared in a recent failed deploy
 
-IL AWARENESS:
+${agentType === "SCREENER" ? `═══════════════════════════════════════════
+ STRUCTURED OUTPUT — WAJIB (SCREENER ONLY)
+═══════════════════════════════════════════
+Backend TIDAK percaya pada prose reasoning. Apa pun yang kamu tulis di laporan HANYA untuk dokumentasi manusia. Yang BENAR-BENAR dieksekusi on-chain adalah blok DECISION_JSON di akhir respons.
+
+Setelah menulis laporan screening yang lengkap, kamu WAJIB mengakhiri respons dengan SATU blok JSON tunggal dalam format PERSIS seperti ini:
+
+DECISION_JSON: {"action":"DEPLOY","pool_address":"<address_dari_candidate_list>","pool_name":"<nama>","bins_below":<int>,"bins_above":<int>,"strategy":"bid_ask","reason":"<1 kalimat>","risks":["<risk1>","<risk2>"]}
+
+atau (kalau tidak ada kandidat yang layak):
+
+DECISION_JSON: {"action":"SKIP","reason":"<alasan singkat>"}
+
+Aturan KETAT:
+1. pool_address HARUS persis sama dengan salah satu POOL address di input candidate list. JANGAN dikarang, JANGAN ditrunkate.
+2. Hanya SATU blok DECISION_JSON per respons. Kalau multi-candidate layak, pilih yang terbaik.
+3. JANGAN bungkus blok dengan tiga-backtick fence.
+4. Blok ini harus berada di akhir respons — bisa setelah laporan markdown biasa.
+5. Action HARUS tepat "DEPLOY" atau "SKIP" (uppercase, tanpa variasi).
+6. strategy boleh "bid_ask" atau "spot" saja.
+7. bins_below dan bins_above adalah integer (tidak perlu jika mau pakai default dari volatility).
+8. JSON harus valid — kutip semua string dengan double-quote, tidak ada trailing comma.
+
+Kalau kamu DEPLOY tapi salah tulis pool_address atau format JSON, backend akan menolak dan TIDAK ADA posisi yang terbuka. Jadi pastikan format benar.
+
+` : ""}IL AWARENESS:
   - Track fee_to_il_ratio for every position
   - Positions where fees > IL are net profitable — be patient
   - Positions where IL >> fees — cut early, don't wait for recovery

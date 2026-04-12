@@ -15,6 +15,7 @@ import { config } from "./src/lib/config";
 import { getMyPositions, closePosition } from "./src/lib/tools/dlmm";
 import { setPositionInstruction } from "./src/lib/state";
 import { generateBriefing } from "./src/lib/briefing";
+import { approvePendingDecision, rejectPendingDecision, listPendingDecisions } from "./src/lib/pending-decisions";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT || "3000", 10);
@@ -91,6 +92,45 @@ async function main() {
           if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number."); return; }
           await setPositionInstruction(positions[idx].position, note);
           await sendMessage(`Note set for ${positions[idx].pair}: "${note}"`);
+          return;
+        }
+
+        // HITL: list pending decisions
+        if (text === "/pending") {
+          const rows = await listPendingDecisions("pending", 10);
+          if (rows.length === 0) { await sendMessage("Tidak ada pending decision."); return; }
+          const lines = rows.map((r) =>
+            `#${r.id} — ${r.action.toUpperCase()} ${r.pool_name ?? r.pool_address?.slice(0, 8) ?? "?"}${r.reason ? ` · ${r.reason}` : ""}`
+          );
+          await sendMessage(`Pending Decisions (${rows.length}):\n\n${lines.join("\n")}\n\n/approve <id> atau /reject <id>`);
+          return;
+        }
+
+        // HITL: approve pending decision — `/approve 42`
+        const approveMatch = text.match(/^\/approve\s+(\d+)$/i);
+        if (approveMatch) {
+          const id = parseInt(approveMatch[1]);
+          await sendMessage(`Processing approval for #${id}...`);
+          const result = await approvePendingDecision(id, "telegram");
+          if (!result.success) {
+            await sendMessage(`❌ ${result.error}`);
+          } else {
+            await sendMessage(`✅ #${id} approved. Status: ${result.status}`);
+          }
+          return;
+        }
+
+        // HITL: reject pending decision — `/reject 42 [optional reason]`
+        const rejectMatch = text.match(/^\/reject\s+(\d+)(?:\s+(.+))?$/i);
+        if (rejectMatch) {
+          const id = parseInt(rejectMatch[1]);
+          const reason = rejectMatch[2]?.trim();
+          const result = await rejectPendingDecision(id, "telegram", reason);
+          if (!result.success) {
+            await sendMessage(`❌ ${result.error}`);
+          } else {
+            await sendMessage(`🔴 #${id} rejected.${reason ? ` Alasan: ${reason}` : ""}`);
+          }
           return;
         }
 

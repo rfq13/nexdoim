@@ -1,11 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
 import { agentLoop } from "@/lib/agent";
 import { supabase } from "@/lib/db";
+import { getPendingDecision } from "@/lib/pending-decisions";
 
 export const maxDuration = 300;
 
+function buildDecisionContextBlock(d: any): string {
+  const args = d.args ?? {};
+  const lines = [
+    `═══ KONTEKS KEPUTUSAN YANG SEDANG DIDISKUSIKAN ═══`,
+    `ID: #${d.id} (status: ${d.status})`,
+    `Action: ${d.action.toUpperCase()}`,
+    `Pool: ${d.pool_name ?? "?"} (${d.pool_address ?? "?"})`,
+  ];
+  if (d.action === "deploy") {
+    lines.push(`Amount: ${args.amount_y ?? "?"} SOL`);
+    lines.push(`Strategy: ${args.strategy ?? "?"}`);
+    lines.push(`Bins: below=${args.bins_below ?? "?"}, above=${args.bins_above ?? "?"}`);
+    if (args.bin_step != null) lines.push(`Bin step: ${args.bin_step}`);
+    if (args.volatility != null) lines.push(`Volatility: ${args.volatility}`);
+    if (args.fee_tvl_ratio != null) lines.push(`fee_active_tvl_ratio: ${args.fee_tvl_ratio}`);
+    if (args.organic_score != null) lines.push(`organic_score: ${args.organic_score}`);
+    if (args.initial_value_usd != null) lines.push(`Initial value: $${Math.round(args.initial_value_usd)}`);
+  }
+  if (d.reason) lines.push(`Alasan agent: ${d.reason}`);
+  if (d.risks && d.risks.length > 0) {
+    lines.push(`Risks (agent):`);
+    for (const r of d.risks) lines.push(`  - ${r}`);
+  }
+  lines.push(``);
+  lines.push(`User meminta diskusi untuk double-check keputusan ini sebelum approve/reject.`);
+  lines.push(`Kamu boleh memanggil tools untuk verifikasi (get_pool_detail, get_token_info,`);
+  lines.push(`check_smart_wallets_on_pool, get_token_holders, search_pools, dll). Kamu juga`);
+  lines.push(`boleh mengubah config via update_config kalau user setuju. Jawab pertanyaan user`);
+  lines.push(`dengan data, bukan opini.`);
+  lines.push(`═══════════════════════════════════════════════`);
+  return lines.join("\n");
+}
+
 export async function POST(req: NextRequest) {
-  const { message, role = "GENERAL", model = null, conversation_id = null } = await req.json();
+  const {
+    message,
+    role = "GENERAL",
+    model = null,
+    conversation_id = null,
+    pending_decision_id = null,
+  } = await req.json();
   if (!message)
     return NextResponse.json({ error: "message required" }, { status: 400 });
 
@@ -19,6 +59,15 @@ export async function POST(req: NextRequest) {
       }, 20000);
 
       try {
+        // ── Resolve decision context if any ─────────────────────
+        let decisionContext: string | null = null;
+        if (pending_decision_id) {
+          const decision = await getPendingDecision(Number(pending_decision_id));
+          if (decision) {
+            decisionContext = buildDecisionContextBlock(decision);
+          }
+        }
+
         // ── Resolve or create conversation ──────────────────────
         let convId: string = conversation_id;
         let sessionHistory: Array<{ role: string; content: string }> = [];
@@ -37,7 +86,10 @@ export async function POST(req: NextRequest) {
           }));
         } else {
           // Create a new conversation — title from first ~60 chars of message
-          const title = message.length > 60 ? message.slice(0, 57) + "..." : message;
+          // (or decision-specific label if discussing a pending decision)
+          const title = pending_decision_id
+            ? `Diskusi Decision #${pending_decision_id}`
+            : (message.length > 60 ? message.slice(0, 57) + "..." : message);
           const { data: newConv, error: convError } = await supabase
             .from("conversations")
             .insert({ title, role, model: model || null })
@@ -54,6 +106,15 @@ export async function POST(req: NextRequest) {
           role: "user",
           content: message,
         });
+
+        // ── Inject decision context as first session history entry ──
+        // (only for the very first turn of a discussion conversation)
+        if (decisionContext && sessionHistory.length === 0) {
+          sessionHistory = [
+            { role: "user", content: decisionContext },
+            { role: "assistant", content: "Baik, saya paham konteks keputusan ini. Silakan lanjut bertanya atau minta saya verifikasi data." },
+          ];
+        }
 
         // ── Run agent ────────────────────────────────────────────
         const result = await agentLoop(message, 20, sessionHistory, role, model);

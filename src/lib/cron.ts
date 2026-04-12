@@ -12,12 +12,14 @@ import { getTrackedPosition, getLastBriefingDate, setLastBriefingDate } from "./
 import { getActiveStrategy } from "./strategy-library";
 import { recordPositionSnapshot, recallForPool } from "./pool-memory";
 import { generateBriefing } from "./briefing";
-import { sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, startPolling, stopPolling } from "./telegram";
+import { sendMessage, sendHTML, notifyOutOfRange, notifyPendingDecision, isEnabled as telegramEnabled, startPolling, stopPolling } from "./telegram";
 import { registerCronRestarter } from "./tools/executor";
 import { getPerformanceSummary } from "./lessons";
 import { stageSignals } from "./signal-tracker";
 import { runStorage, type LogEntry, type RunContext } from "./run-context";
 import { supabase } from "./db";
+import { parseDecisionJson, validateDecision } from "./screening-parser";
+import { createPendingDecision } from "./pending-decisions";
 
 // ─── Market Context ──────────────────────────────────────────
 async function getMarketContext(): Promise<string> {
@@ -389,6 +391,80 @@ export async function runScreeningCycle({ silent = false } = {}) {
       config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048
     );
     screenReport = content;
+
+    // ── HITL: create pending decision from structured DECISION_JSON ──
+    // The LLM's prose is informational only; the backend treats the
+    // DECISION_JSON block as the source of truth. Instead of auto-executing,
+    // we create a pending_decision row and notify the human (via dashboard
+    // + Telegram) for approval. Execution happens only after approval.
+    const decision = parseDecisionJson(content);
+    if (!decision) {
+      log("screening_warn", "LLM tidak menghasilkan blok DECISION_JSON — skip");
+      screenReport += `\n\n---\n⚠️ **HITL:** tidak ada blok DECISION_JSON di output — tidak ada rekomendasi.`;
+    } else if (decision.action === "SKIP") {
+      log("screening", `Decision: SKIP — ${decision.reason ?? "no reason given"}`);
+      screenReport += `\n\n---\n**Decision:** SKIP — ${decision.reason ?? "(tidak ada alasan)"}`;
+    } else if (decision.action === "DEPLOY") {
+      const validation = validateDecision(decision, candidates);
+      if (!validation.valid) {
+        log("screening_error", `Invalid DECISION_JSON: ${validation.reason}`);
+        screenReport += `\n\n---\n❌ **HITL gagal:** ${validation.reason}`;
+      } else {
+        const pool = candidates.find((c: any) => c.pool === decision.pool_address);
+        const suggestedBins = computeBinRange(pool?.volatility ?? 3, pool?.bin_step ?? 80);
+        const solPriceMatch = marketCtx.match(/SOL:\s*\$(\d+\.?\d*)/);
+        const solPrice = solPriceMatch ? parseFloat(solPriceMatch[1]) : 0;
+        const binsBelow = decision.bins_below ?? suggestedBins.binsBelow;
+        const binsAbove = decision.bins_above ?? suggestedBins.binsAbove;
+        const strategy = decision.strategy ?? "bid_ask";
+
+        const deployArgs = {
+          pool_address: decision.pool_address,
+          pool_name: decision.pool_name ?? pool?.name,
+          amount_y: deployAmount, // server-authoritative — LLM cannot override
+          bins_below: binsBelow,
+          bins_above: binsAbove,
+          strategy,
+          bin_step: pool?.bin_step,
+          volatility: pool?.volatility,
+          fee_tvl_ratio: pool?.fee_active_tvl_ratio,
+          organic_score: pool?.organic_score,
+          initial_value_usd: solPrice > 0 ? deployAmount * solPrice : undefined,
+        };
+
+        const pending = await createPendingDecision({
+          action: "deploy",
+          pool_address: decision.pool_address,
+          pool_name: decision.pool_name ?? pool?.name,
+          args: deployArgs,
+          reason: decision.reason,
+          risks: decision.risks ?? [],
+        });
+
+        if (!pending) {
+          log("screening_error", "Gagal membuat pending_decision di database");
+          screenReport += `\n\n---\n❌ **HITL:** gagal simpan pending decision ke database`;
+        } else {
+          log("screening", `HITL pending #${pending.id}: ${decision.pool_name ?? pool?.name}`);
+          // Fire-and-forget Telegram notification (non-blocking)
+          notifyPendingDecision({
+            id: pending.id,
+            action: "deploy",
+            poolName: decision.pool_name ?? pool?.name,
+            poolAddress: decision.pool_address,
+            amountSol: deployAmount,
+            strategy,
+            binsBelow,
+            binsAbove,
+            reason: decision.reason,
+            risks: decision.risks ?? [],
+            expiresInMin: 30,
+          }).catch((e: any) => log("telegram_error", `notifyPendingDecision failed: ${e.message}`));
+
+          screenReport += `\n\n---\n🔔 **Pending Approval** — <code>#${pending.id}</code>\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Bins: below=${binsBelow}, above=${binsAbove}\n- Alasan: ${decision.reason ?? "(tidak ada)"}\n\nKonfirmasi via dashboard atau Telegram: \`/approve ${pending.id}\` / \`/reject ${pending.id}\``;
+        }
+      }
+    }
   } catch (error: any) {
     log("cron_error", `Screening cycle failed: ${error.message}`);
     screenReport = `Screening cycle failed: ${error.message}`;

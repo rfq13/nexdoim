@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Markdown } from "@/components/Markdown";
+import { PendingDecisions } from "@/components/PendingDecisions";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -193,6 +194,9 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {/* Pending HITL decisions — shown prominently at top */}
+      <PendingDecisions />
 
       {/* Wallet error banner */}
       {wallet?.error && (

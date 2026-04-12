@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Markdown } from "@/components/Markdown";
 
 type AgentRole = "GENERAL" | "MANAGER" | "SCREENER";
@@ -41,7 +42,28 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 // ─── Main Component ───────────────────────────────────────────────
+interface DecisionBanner {
+  id: number;
+  action: "deploy" | "close";
+  pool_name: string | null;
+  pool_address: string | null;
+  status: string;
+}
+
 export default function ChatPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-(--muted)">Memuat...</div>}>
+      <ChatInner />
+    </Suspense>
+  );
+}
+
+function ChatInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const decisionIdParam = searchParams.get("decisionId");
+  const pendingDecisionId = decisionIdParam ? Number(decisionIdParam) : null;
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -53,8 +75,61 @@ export default function ChatPage() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [decisionBanner, setDecisionBanner] = useState<DecisionBanner | null>(null);
+  const [actingOnDecision, setActingOnDecision] = useState<"approve" | "reject" | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load decision context when ?decisionId= is present
+  useEffect(() => {
+    if (!pendingDecisionId) { setDecisionBanner(null); return; }
+    fetch(`/api/pending-decisions/${pendingDecisionId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.decision) {
+          setDecisionBanner({
+            id: data.decision.id,
+            action: data.decision.action,
+            pool_name: data.decision.pool_name,
+            pool_address: data.decision.pool_address,
+            status: data.decision.status,
+          });
+        }
+      })
+      .catch(() => setDecisionBanner(null));
+  }, [pendingDecisionId]);
+
+  const approveFromChat = async () => {
+    if (!decisionBanner || actingOnDecision) return;
+    setActingOnDecision("approve");
+    try {
+      const res = await fetch(`/api/pending-decisions/${decisionBanner.id}/approve`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Bounce back to dashboard to see execution result
+      setTimeout(() => router.push("/"), 800);
+    } catch (e: any) {
+      alert(`Approve gagal: ${e.message}`);
+      setActingOnDecision(null);
+    }
+  };
+
+  const rejectFromChat = async () => {
+    if (!decisionBanner || actingOnDecision) return;
+    const reason = window.prompt("Alasan reject (opsional):") ?? undefined;
+    setActingOnDecision("reject");
+    try {
+      const res = await fetch(`/api/pending-decisions/${decisionBanner.id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setTimeout(() => router.push("/"), 500);
+    } catch (e: any) {
+      alert(`Reject gagal: ${e.message}`);
+      setActingOnDecision(null);
+    }
+  };
 
   // Load models
   useEffect(() => {
@@ -137,6 +212,9 @@ export default function ChatPage() {
           role,
           model: selectedModel || null,
           conversation_id: activeConvId,
+          // Only send on the FIRST message of a discussion — after the conversation
+          // exists, session history already includes the injected decision context.
+          pending_decision_id: (activeConvId || !pendingDecisionId) ? null : pendingDecisionId,
         }),
       });
 
@@ -270,6 +348,48 @@ export default function ChatPage() {
             </select>
           </div>
         </div>
+
+        {/* Decision discussion banner */}
+        {decisionBanner && (
+          <div className="bg-yellow-500/10 border border-yellow-500/40 rounded-xl p-3 mb-3">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold bg-yellow-500/20 text-yellow-300">
+                    DISKUSI #{decisionBanner.id}
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-medium bg-white/5 text-(--muted)">
+                    {decisionBanner.status.toUpperCase()}
+                  </span>
+                  <span className="text-sm font-semibold text-yellow-200">
+                    {decisionBanner.action.toUpperCase()} {decisionBanner.pool_name ?? decisionBanner.pool_address?.slice(0, 12)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-(--muted) mt-1">
+                  Diskusikan dan verifikasi keputusan ini sebelum approve/reject. Agent bisa search pool, cek holders, ubah config via <code className="font-mono">update_config</code>.
+                </p>
+              </div>
+              {decisionBanner.status === "pending" && (
+                <div className="flex gap-1.5 flex-shrink-0">
+                  <button
+                    onClick={approveFromChat}
+                    disabled={!!actingOnDecision}
+                    className="text-xs px-2.5 py-1 rounded-md bg-green-500/15 text-green-300 border border-green-500/40 hover:bg-green-500/25 disabled:opacity-40 transition-colors"
+                  >
+                    {actingOnDecision === "approve" ? "..." : "Approve"}
+                  </button>
+                  <button
+                    onClick={rejectFromChat}
+                    disabled={!!actingOnDecision}
+                    className="text-xs px-2.5 py-1 rounded-md bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
+                  >
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto space-y-4 pr-1">
