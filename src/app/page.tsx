@@ -158,13 +158,16 @@ export default function Dashboard() {
 
   // ── derived values ──
   const sol = wallet?.sol ?? 0;
-  const solUsd = wallet?.sol_usd ?? 0;
-  const totalUsd = wallet?.total_usd ?? 0;
+  const solPrice = wallet?.sol_price ?? 0;
+  const walletUsd = wallet?.sol_usd ?? 0; // SOL + tokens in wallet
   const openCount = positions?.total_positions ?? 0;
   const posRows: Position[] = positions?.positions ?? [];
 
   // Current value of all open positions (total_value_usd from on-chain data)
   const deployedUsd = posRows.reduce((s: number, p: Position) => s + (p.total_value_usd ?? p.deposit_usd ?? 0), 0);
+  // Total = wallet liquid + deployed in positions
+  const totalUsd = walletUsd + deployedUsd;
+  const availableUsd = walletUsd;
   const portfolioPct = totalUsd > 0 ? deployedUsd / totalUsd : 0;
 
   // Cumulative PnL line from closed positions (oldest → newest)
@@ -243,8 +246,8 @@ export default function Dashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="SOL Balance" value={`${sol.toFixed(3)} SOL`} sub={`≈ $${solUsd.toFixed(0)}`} />
-        <StatCard label="Total Portfolio" value={`$${totalUsd.toFixed(0)}`} sub={openCount > 0 ? `${openCount} posisi terbuka` : "Tidak ada posisi"} />
+        <StatCard label="SOL Balance" value={`${sol.toFixed(3)} SOL`} sub={solPrice > 0 ? `≈ $${walletUsd.toFixed(0)} (@$${solPrice.toFixed(0)})` : "Harga SOL unavailable"} />
+        <StatCard label="Total Portfolio" value={`$${totalUsd.toFixed(0)}`} sub={openCount > 0 ? `$${availableUsd.toFixed(0)} liquid + $${deployedUsd.toFixed(0)} deployed` : "Tidak ada posisi"} />
         <StatCard
           label="All-time PnL"
           value={summary ? `$${summary.total_pnl_usd >= 0 ? "+" : ""}${summary.total_pnl_usd.toFixed(2)}` : "—"}
@@ -277,7 +280,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-(--border)" />
                 <span className="text-(--muted)">Available</span>
-                <span className="ml-auto font-mono">${(totalUsd - deployedUsd).toFixed(0)}</span>
+                <span className="ml-auto font-mono">${availableUsd.toFixed(0)}</span>
               </div>
               <div className="border-t border-(--border) pt-2 flex justify-between">
                 <span className="text-(--muted)">Total</span>

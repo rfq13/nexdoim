@@ -113,12 +113,39 @@ export async function getWalletBalances() {
   };
 }
 
+let _solPriceCache: { price: number; at: number } = { price: 0, at: 0 };
+
 async function fetchSolPrice(): Promise<number> {
-  const res = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112", { signal: AbortSignal.timeout(4000) });
-  if (!res.ok) return 0;
-  const data = await res.json();
-  return parseFloat(data?.data?.["So11111111111111111111111111111111111111112"]?.price ?? "0");
+  // Return cache if fresh (< 60s)
+  if (_solPriceCache.price > 0 && Date.now() - _solPriceCache.at < 60_000) {
+    return _solPriceCache.price;
+  }
+
+  // Try Jupiter
+  try {
+    const res = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112", { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const data = await res.json();
+      const price = parseFloat(data?.data?.["So11111111111111111111111111111111111111112"]?.price ?? "0");
+      if (price > 0) { _solPriceCache = { price, at: Date.now() }; return price; }
+    }
+  } catch { /* try fallback */ }
+
+  // Fallback: CoinGecko
+  try {
+    const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd", { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const data = await res.json();
+      const price = data?.solana?.usd ?? 0;
+      if (price > 0) { _solPriceCache = { price, at: Date.now() }; return price; }
+    }
+  } catch { /* use stale cache */ }
+
+  // Last resort: stale cache or 0
+  return _solPriceCache.price;
 }
+
+export { fetchSolPrice };
 
 export async function swapToken({ input_mint, output_mint, amount }: { input_mint: string; output_mint: string; amount: number }) {
   input_mint = normalizeMint(input_mint);
