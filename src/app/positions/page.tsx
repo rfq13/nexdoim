@@ -89,19 +89,23 @@ function HealthBar({ label, value, max, unit, pct }: { label: string; value: str
 
 export default function PositionsPage() {
   const [data, setData] = useState<any>(null);
+  const [perf, setPerf] = useState<any>(null);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [refreshing, setRefreshing] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
   const [closeResult, setCloseResult] = useState<{ address: string; status: string } | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
   const [, setTick] = useState(0);
 
   const load = useCallback(async () => {
     try {
-      const [posRes, cfgRes] = await Promise.all([
+      const [posRes, cfgRes, perfRes] = await Promise.all([
         fetch("/api/positions").then((r) => r.json()).catch(() => null),
         fetch("/api/config").then((r) => r.json()).catch(() => null),
+        fetch("/api/performance").then((r) => r.json()).catch(() => null),
       ]);
       if (posRes) setData(posRes);
+      if (perfRes) setPerf(perfRes);
       if (cfgRes?.management) {
         setThresholds({
           outOfRangeWaitMinutes: cfgRes.management.outOfRangeWaitMinutes ?? 30,
@@ -333,6 +337,78 @@ export default function PositionsPage() {
           </div>
         );
       })}
+
+      {/* ── Closed Positions History ──────────────────────────────── */}
+      <ClosedPositions perf={perf} showClosed={showClosed} setShowClosed={setShowClosed} />
+    </div>
+  );
+}
+
+function ClosedPositions({ perf, showClosed, setShowClosed }: { perf: any; showClosed: boolean; setShowClosed: (v: boolean | ((prev: boolean) => boolean)) => void }) {
+  const summary = perf?.summary;
+  const history: any[] = perf?.history ?? [];
+  const closed = summary?.total_positions_closed ?? 0;
+  const totalPnl = summary?.total_pnl_usd ?? 0;
+  const totalFees = summary?.total_fees_usd ?? 0;
+  const winRate = summary?.win_rate_pct ?? 0;
+
+  return (
+    <div className="mt-6">
+      <button
+        onClick={() => setShowClosed((v: boolean) => !v)}
+        className="flex items-center gap-2 text-xs text-(--muted) hover:text-(--text) transition-colors"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${showClosed ? "rotate-180" : ""}`}>
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+        <span className="font-semibold uppercase tracking-wider">
+          Posisi Tertutup ({closed})
+        </span>
+        {closed > 0 && (
+          <span className="flex gap-3 font-mono text-[10px] normal-case">
+            <span className={totalPnl >= 0 ? "text-green-400" : "text-red-400"}>
+              PnL: {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+            </span>
+            <span className="text-(--muted)">Fees: ${totalFees.toFixed(2)}</span>
+            <span className={winRate >= 50 ? "text-green-400" : "text-red-400"}>
+              Win: {winRate}%
+            </span>
+          </span>
+        )}
+      </button>
+
+      {showClosed && (
+        <div className="mt-3 space-y-1.5">
+          {closed === 0 && (
+            <div className="text-xs text-(--muted) border border-dashed border-(--border) rounded-lg p-6 text-center">
+              Belum ada posisi yang ditutup. Statistik akan muncul setelah posisi pertama di-close.
+            </div>
+          )}
+          {history.sort((a: any, b: any) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime()).map((h: any, i: number) => {
+            const pnl = h.pnl_usd ?? 0;
+            const pnlPct = h.pnl_pct ?? 0;
+            const fees = h.fees_earned_usd ?? 0;
+            const isWin = pnl >= 0;
+            return (
+              <div key={i} className={`border rounded-lg px-3 py-2.5 flex items-center justify-between gap-3 flex-wrap ${
+                isWin ? "border-green-500/20 bg-green-500/5" : "border-red-500/20 bg-red-500/5"
+              }`}>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${isWin ? "bg-green-400" : "bg-red-400"}`} />
+                  <span className="text-sm font-medium truncate">{h.pool_name ?? `#${i + 1}`}</span>
+                </div>
+                <div className="flex gap-4 text-xs font-mono shrink-0">
+                  <span className={isWin ? "text-green-400" : "text-red-400"}>
+                    {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
+                  </span>
+                  <span className="text-(--muted)">Fees: ${fees.toFixed(2)}</span>
+                  <span className="text-(--muted)">{new Date(h.recorded_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
