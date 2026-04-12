@@ -15,6 +15,8 @@ const SECTION_FIELDS: Record<string, Record<string, FieldDef>> = {
     autoDeployMaxPerHour:         { type: "number", label: "Max Auto-Deploy / Jam", min: 0, max: 10, step: 1, description: "Batas deploy otomatis per jam. Jika tercapai, fallback ke HITL manual." },
     autoDeployMaxPerDay:          { type: "number", label: "Max Auto-Deploy / Hari", min: 0, max: 20, step: 1, description: "Batas deploy otomatis per hari. Jika tercapai, fallback ke HITL manual." },
     autoDeployRequireNoBearish:   { type: "boolean", label: "Block Auto saat BEARISH", description: "Jika ON dan market BEARISH, auto-deploy dimatikan — butuh konfirmasi manual." },
+    maxDailyLossUsd:              { type: "number", label: "Max Daily Loss (USD)", min: 0, step: 10, description: "Pause screening jika total loss hari ini melebihi nilai ini. 0 = tidak ada batas." },
+    maxDrawdownPct:               { type: "number", label: "Max Drawdown (%)", min: 0, max: 100, step: 5, description: "Pause screening jika drawdown portfolio melebihi persentase ini." },
   },
   screening: {
     minFeeActiveTvlRatio: { type: "number", label: "Min Fee/Active TVL Ratio", step: 0.01, min: 0, description: "Rasio minimum fee terhadap TVL aktif (misal: 0.02 = 2%)" },

@@ -122,6 +122,7 @@ export function validateDecision(
 export interface ManagementDecision {
   action: "CLOSE" | "STAY" | "REBALANCE";
   position_address: string;
+  pool_address?: string;
   pair?: string;
   reason?: string;
   risks?: string[];
@@ -189,7 +190,7 @@ export function validateManagementDecisions(
   const invalid: Array<{ decision: ManagementDecision; reason: string }> = [];
 
   for (const d of decisions) {
-    if (d.action !== "CLOSE") continue; // Only CLOSE needs execution; STAY/REBALANCE are informational
+    if (d.action === "STAY") continue; // STAY is informational only
     if (!d.position_address) {
       invalid.push({ decision: d, reason: "missing position_address" });
       continue;

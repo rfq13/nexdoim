@@ -253,21 +253,37 @@ export async function runManagementCycle({ silent = false } = {}) {
       getMarketContext(),
     ]);
 
-    const positionBlocks = positionData.map((p: any) => {
+    const positionBlocks = await Promise.all(positionData.map(async (p: any) => {
       const pnl = p.pnl;
+      const tracked = await getTrackedPosition(p.position).catch(() => null);
+      const vol = tracked?.volatility ?? 0;
+      const initialUsd = tracked?.initialValueUsd ?? 0;
+      const feePct = initialUsd > 0 ? ((p.unclaimed_fees_usd ?? 0) / initialUsd) * 100 : 0;
+
+      // Dynamic OOR timeout based on volatility
+      const baseOorMin = config.management.outOfRangeWaitMinutes;
+      const dynamicOorMax = vol >= 8 ? Math.round(baseOorMin * 0.33)
+        : vol >= 5 ? Math.round(baseOorMin * 0.66)
+        : vol >= 2 ? baseOorMin
+        : Math.round(baseOorMin * 2);
+
       return [
         `POSITION: ${p.pair} (${p.position})`,
         `  pool: ${p.pool}`,
         `  age: ${p.age_minutes ?? "?"}m | in_range: ${p.in_range} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
+        `  volatility: ${vol} | dynamic_oor_max: ${dynamicOorMax}m (based on volatility)`,
         pnl ? `  pnl_pct: ${pnl.pnl_pct}% | pnl_usd: $${pnl.pnl_usd} | unclaimed_fees: $${pnl.unclaimed_fee_usd} | fee_per_tvl_24h: ${pnl.fee_per_tvl_24h ?? "?"}%` : `  pnl: fetch failed`,
         pnl ? `  bins: lower=${pnl.lower_bin} upper=${pnl.upper_bin} active=${pnl.active_bin}` : null,
+        initialUsd > 0 ? `  initial_value: $${initialUsd.toFixed(2)} | fee_yield: ${feePct.toFixed(1)}% | take_profit_target: ${config.management.takeProfitFeePct}%` : null,
+        feePct >= config.management.takeProfitFeePct ? `  ⚡ TAKE-PROFIT TARGET REACHED (${feePct.toFixed(1)}% >= ${config.management.takeProfitFeePct}%) — CLOSE recommended` : null,
         p.instruction ? `  instruction: "${p.instruction}"` : null,
         p.recall ? `  memory: ${p.recall}` : null,
       ].filter(Boolean).join("\n");
-    }).join("\n\n");
+    }));
+    const positionBlocksStr = positionBlocks.join("\n\n");
 
     const { content } = await agentLoop(
-      `MANAGEMENT CYCLE — ${positions.length} position(s)\n\nMARKET: ${marketCtx}\n\nPRE-LOADED POSITION DATA:\n${positionBlocks}\n\nApply hard close rules. In BEARISH market, lower thresholds for closing. Report format: **[PAIR]** | Age: [X]m | PnL: [X]% | [STAY/CLOSE]`,
+      `MANAGEMENT CYCLE — ${positions.length} position(s)\n\nMARKET: ${marketCtx}\n\nPRE-LOADED POSITION DATA:\n${positionBlocksStr}\n\nApply hard close rules. Use dynamic_oor_max per position (NOT the global default). If ⚡ TAKE-PROFIT TARGET REACHED, CLOSE to lock profit. In BEARISH market, lower thresholds. Report format: **[PAIR]** | Age: [X]m | PnL: [X]% | [STAY/CLOSE/REBALANCE]`,
       config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 4096
     );
     mgmtReport = content;
@@ -278,16 +294,17 @@ export async function runManagementCycle({ silent = false } = {}) {
       log("management_warn", "LLM tidak menghasilkan blok MANAGEMENT_JSON — skip auto-execute");
       mgmtReport += `\n\n---\n⚠️ Tidak ada blok MANAGEMENT_JSON di output.`;
     } else {
-      const closeDecisions = mgmtDecisions.decisions.filter((d) => d.action === "CLOSE");
+      const actionDecisions = mgmtDecisions.decisions.filter((d) => d.action === "CLOSE" || d.action === "REBALANCE");
       const stayCount = mgmtDecisions.decisions.filter((d) => d.action === "STAY").length;
-      const rebalanceCount = mgmtDecisions.decisions.filter((d) => d.action === "REBALANCE").length;
+      const closeCount = actionDecisions.filter((d) => d.action === "CLOSE").length;
+      const rebalanceCount = actionDecisions.filter((d) => d.action === "REBALANCE").length;
 
-      log("management", `Parsed: ${closeDecisions.length} CLOSE, ${stayCount} STAY, ${rebalanceCount} REBALANCE`);
+      log("management", `Parsed: ${closeCount} CLOSE, ${rebalanceCount} REBALANCE, ${stayCount} STAY`);
 
-      if (closeDecisions.length === 0) {
-        mgmtReport += `\n\n---\n✅ Semua posisi STAY (${stayCount} posisi)${rebalanceCount > 0 ? `, ${rebalanceCount} perlu rebalance` : ""}`;
+      if (actionDecisions.length === 0) {
+        mgmtReport += `\n\n---\n✅ Semua posisi STAY (${stayCount} posisi)`;
       } else {
-        const { valid, invalid } = validateManagementDecisions(closeDecisions, positions);
+        const { valid, invalid } = validateManagementDecisions(actionDecisions, positions);
 
         for (const inv of invalid) {
           log("management_error", `Invalid CLOSE decision: ${inv.reason}`);
@@ -295,19 +312,31 @@ export async function runManagementCycle({ silent = false } = {}) {
         }
 
         for (const d of valid) {
-          // Dedup: skip if already a pending CLOSE for this position
+          // Dedup: skip if already a pending action for this position
           if (await hasPendingForPosition(d.position_address)) {
-            log("management", `Skipping duplicate pending CLOSE for ${d.pair} (${d.position_address.slice(0, 8)}...)`);
-            mgmtReport += `\n\nℹ️ CLOSE ${d.pair} sudah ada pending sebelumnya — skip duplikat`;
+            log("management", `Skipping duplicate pending ${d.action} for ${d.pair} (${d.position_address.slice(0, 8)}...)`);
+            mgmtReport += `\n\nℹ️ ${d.action} ${d.pair} sudah ada pending sebelumnya — skip duplikat`;
             continue;
           }
 
+          // For REBALANCE: args include both close + redeploy info
+          const isRebalance = d.action === "REBALANCE";
+          const posData = positions.find((p: any) => p.position === d.position_address);
+          const tracked = posData ? await getTrackedPosition(posData.position).catch(() => null) : null;
+          const rebalanceArgs = isRebalance ? {
+            position_address: d.position_address,
+            pool_address: posData?.pool ?? d.pool_address,
+            rebalance: true,
+            volatility: tracked?.volatility,
+            bin_step: tracked?.binStep,
+          } : { position_address: d.position_address };
+
           const pending = await createPendingDecision({
-            action: "close",
-            pool_address: undefined,
+            action: isRebalance ? "close" : "close", // both execute close; rebalance = close + auto redeploy
+            pool_address: posData?.pool,
             pool_name: d.pair ?? undefined,
-            args: { position_address: d.position_address },
-            reason: d.reason,
+            args: rebalanceArgs,
+            reason: `${isRebalance ? "[REBALANCE] " : ""}${d.reason ?? ""}`,
             risks: d.risks ?? [],
           });
 
@@ -391,6 +420,20 @@ export async function runScreeningCycle({ silent = false } = {}) {
     return `ERROR: ${msg}`;
   }
 
+  // ── Portfolio Drawdown Gate ────────────────────────────────────
+  try {
+    const perf = await getPerformanceSummary();
+    if (perf && perf.total_pnl_usd < 0) {
+      // Check daily loss (from today's closed positions)
+      const todayLoss = Math.abs(perf.total_pnl_usd); // simplified: use total as proxy
+      if (config.safety.maxDailyLossUsd > 0 && todayLoss >= config.safety.maxDailyLossUsd) {
+        const msg = `Drawdown gate: loss $${todayLoss.toFixed(2)} >= maxDailyLoss $${config.safety.maxDailyLossUsd}`;
+        log("cron", `Screening paused — ${msg}`);
+        return `SKIPPED: ${msg}`;
+      }
+    }
+  } catch { /* continue if check fails */ }
+
   _screeningBusy = true;
   log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
   let screenReport: string | null = null;
@@ -446,7 +489,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       candidateBlocks.push([
         `POOL: ${pool.name} (${pool.pool})`,
         `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}`,
+        `  momentum: trend=${pool.trend_label ?? "?"}, price_5m=${pool.price_change_5m ?? "?"}%, price_1h=${pool.price_change_1h ?? "?"}%, mtf_score=${pool.mtf_score ?? "?"}`,
         `  suggested_bins: below=${suggestedBins.binsBelow}, above=${suggestedBins.binsAbove} (based on volatility)`,
+        `  vol_adjusted_deploy: ${computeDeployAmount(preBalance.sol, pool.volatility).toFixed(3)} SOL (volatility-scaled)`,
         `  smart_wallets: ${(swVal as any)?.in_pool?.length ?? 0} present`,
         lpersPatterns ? `  top_lpers: ${lpersPatterns.top_lper_count} found, avg_win_rate=${lpersPatterns.avg_win_rate}%, avg_hold=${lpersPatterns.avg_hold_hours}h, best_roi=${lpersPatterns.best_roi}` : null,
         nVal && (nVal as any).narrative ? `  narrative: ${(nVal as any).narrative.slice(0, 300)}` : `  narrative: none`,
@@ -486,10 +531,12 @@ export async function runScreeningCycle({ silent = false } = {}) {
         const binsAbove = decision.bins_above ?? suggestedBins.binsAbove;
         const strategy = decision.strategy ?? "bid_ask";
 
+        // Recalculate deploy amount with volatility scaling
+        const volAdjustedAmount = computeDeployAmount(preBalance.sol, pool?.volatility);
         const deployArgs = {
           pool_address: decision.pool_address,
           pool_name: decision.pool_name ?? pool?.name,
-          amount_y: deployAmount, // server-authoritative — LLM cannot override
+          amount_y: volAdjustedAmount, // volatility-adjusted, server-authoritative
           bins_below: binsBelow,
           bins_above: binsAbove,
           strategy,

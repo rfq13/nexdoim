@@ -90,16 +90,19 @@ Pertimbangkan goal ini saat membuat keputusan:
 
 MANAGEMENT — CLOSE when ANY is true:
   1. fee_per_tvl_24h < ${config.management.minFeePerTvl24h}% AND age > 60m (pool dried up)
-  2. OOR minutes > ${config.management.outOfRangeWaitMinutes} AND bins_away > ${config.management.outOfRangeBinsToClose} (drifted too far)
+  2. oor_minutes > dynamic_oor_max AND bins_away > ${config.management.outOfRangeBinsToClose} (GUNAKAN dynamic_oor_max per posisi, BUKAN global default)
   3. pnl_pct < ${config.management.emergencyPriceDropPct}% (emergency exit)
   4. Market is BEARISH AND pnl_pct < -10% (don't hold losers in downtrend)
+  5. ⚡ TAKE-PROFIT: fee_yield >= ${config.management.takeProfitFeePct}% (lock profit — jangan biarkan profit hilang)
 
 MANAGEMENT — STAY when:
   - fee_per_tvl_24h >= ${config.management.minFeePerTvl24h}% AND in_range (fees are flowing)
   - pnl_pct is negative but IL < fees_earned (fees still winning)
+  - OOR tapi oor_minutes < dynamic_oor_max (belum waktunya close)
 
-MANAGEMENT — REBALANCE when:
-  - OOR but pool metrics (volume, fee_tvl) still strong
+MANAGEMENT — REBALANCE when (ACTIONABLE — backend akan eksekusi close+redeploy):
+  - OOR + oor_minutes mendekati dynamic_oor_max, TAPI pool metrics masih kuat (fee_tvl, volume tinggi)
+  - Lebih baik rebalance daripada close total jika pool masih aktif
   - volume > ${config.management.minVolumeToRebalance} indicates continued interest
 
 ${agentType === "MANAGER" ? `═══════════════════════════════════════════
@@ -129,11 +132,14 @@ SCREENING — DEPLOY when ALL are true:
   4. Market is NOT BEARISH (or pool has exceptional metrics)
   5. Circuit breaker is not active
   6. is_pvp is NOT true (rival pool with same symbol already established)
+  7. MOMENTUM: trend_label = BULLISH atau NEUTRAL (JANGAN deploy saat pool trend BEARISH)
+  8. Perhatikan vol_adjusted_deploy — ini jumlah SOL yang akan dideploy (sudah disesuaikan volatility)
 
 SCREENING — SKIP when:
   - Pool shows is_pvp = true and you can see pvp_rival_tvl is significant
   - Token deployer appears in recent CLOSE decisions with losses
   - Same pool or token appeared in a recent failed deploy
+  - Pool trend_label = BEARISH (harga declining di kedua timeframe)
 
 ${agentType === "SCREENER" ? `═══════════════════════════════════════════
  STRUCTURED OUTPUT — WAJIB (SCREENER ONLY)
@@ -154,7 +160,11 @@ Aturan KETAT:
 3. JANGAN bungkus blok dengan tiga-backtick fence.
 4. Blok ini harus berada di akhir respons — bisa setelah laporan markdown biasa.
 5. Action HARUS tepat "DEPLOY" atau "SKIP" (uppercase, tanpa variasi).
-6. strategy boleh "bid_ask" atau "spot" saja.
+6. strategy: pilih berdasarkan kondisi pool:
+   - volatility >= 5 + market BEARISH → "bid_ask" single-sided (defensive)
+   - volatility >= 5 + market BULLISH → "bid_ask" (aggressive fee capture)
+   - volatility < 2 → "spot" (tight range, max fee efficiency)
+   - Default: "bid_ask"
 7. bins_below dan bins_above adalah integer (tidak perlu jika mau pakai default dari volatility).
 8. JSON harus valid — kutip semua string dengan double-quote, tidak ada trailing comma.
 

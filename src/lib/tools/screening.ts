@@ -206,13 +206,31 @@ async function validateMultiTimeframe(pools: any[]): Promise<any[]> {
     return pools
       .map((pool: any) => {
         const hourly = hourlyPools.get(pool.pool);
-        const pctChange = hourly?.pool_price_change_pct ?? hourly?.price_change_percentage ?? 0;
+        const priceChange5m = pool.price_change_pct ?? 0;
+        const priceChange1h = hourly?.pool_price_change_pct ?? hourly?.price_change_percentage ?? 0;
+
+        // Momentum scoring: count positive timeframes
+        const trend5m = priceChange5m > 0 ? 1 : priceChange5m < -5 ? -1 : 0;
+        const trend1h = priceChange1h > 0 ? 1 : priceChange1h < -10 ? -1 : 0;
+        const trendScore = trend5m + trend1h; // -2 to +2
+        const trendLabel = trendScore >= 1 ? "BULLISH" : trendScore <= -1 ? "BEARISH" : "NEUTRAL";
+
         const mtfScore = hourly
           ? (hourly.fee_active_tvl_ratio >= s.minFeeActiveTvlRatio ? 1 : 0)
             + (hourly.volume >= s.minVolume ? 1 : 0)
-            + (pctChange > -10 ? 1 : 0)
+            + (priceChange1h > -10 ? 1 : 0)
+            + (trendScore > 0 ? 1 : 0) // bonus for positive momentum
           : 0;
-        return { ...pool, mtf_score: mtfScore, mtf_validated: mtfScore >= 2 };
+
+        return {
+          ...pool,
+          mtf_score: mtfScore,
+          mtf_validated: mtfScore >= 2,
+          price_change_5m: Math.round(priceChange5m * 100) / 100,
+          price_change_1h: Math.round(priceChange1h * 100) / 100,
+          trend_label: trendLabel,
+          trend_score: trendScore,
+        };
       })
       .sort((a: any, b: any) => b.mtf_score - a.mtf_score);
   } catch {

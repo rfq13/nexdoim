@@ -47,6 +47,8 @@ export interface MeridianConfig {
     autoDeployMaxPerHour: number;
     autoDeployMaxPerDay: number;
     autoDeployRequireNoBearish: boolean;
+    maxDailyLossUsd: number;
+    maxDrawdownPct: number;
   };
   darwin: {
     enabled: boolean;
@@ -142,6 +144,8 @@ const DEFAULT_CONFIG: MeridianConfig = {
     autoDeployMaxPerHour: 1,
     autoDeployMaxPerDay: 3,
     autoDeployRequireNoBearish: true,
+    maxDailyLossUsd: 50,
+    maxDrawdownPct: 20,
   },
   darwin: {
     enabled: true,
@@ -214,13 +218,31 @@ export async function saveConfig(partial: Record<string, unknown>) {
   if (error) throw error;
 }
 
-export function computeDeployAmount(walletSol: number): number {
+/**
+ * Compute deploy amount with optional volatility scaling.
+ * Higher volatility = smaller position (risk-proportional sizing).
+ *   vol >= 8  → 50% of normal
+ *   vol 5-8   → 75%
+ *   vol 2-5   → 100% (baseline)
+ *   vol < 2   → 120% (tight range, lower risk)
+ */
+export function computeDeployAmount(walletSol: number, volatility?: number): number {
   const reserve = config.management.gasReserve;
   const pct = config.management.positionSizePct;
   const floor = config.management.deployAmountSol;
   const ceil = config.risk.maxDeployAmount;
   const deployable = Math.max(0, walletSol - reserve);
-  const dynamic = deployable * pct;
+  let dynamic = deployable * pct;
+
+  // Volatility scaling
+  if (volatility != null && volatility > 0) {
+    const scale = volatility >= 8 ? 0.5
+      : volatility >= 5 ? 0.75
+      : volatility >= 2 ? 1.0
+      : 1.2;
+    dynamic *= scale;
+  }
+
   return parseFloat(Math.min(ceil, Math.max(floor, dynamic)).toFixed(2));
 }
 

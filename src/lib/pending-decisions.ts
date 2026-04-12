@@ -165,6 +165,39 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
     execution = { error: e?.message ?? String(e) };
   }
 
+  // If this is a rebalance (close + redeploy), trigger redeploy after successful close
+  if (!execution?.error && !execution?.blocked && claimed.args?.rebalance && claimed.args?.pool_address) {
+    try {
+      const { computeDeployAmount, computeBinRange, config } = await import("./config");
+      const { getWalletBalances } = await import("./tools/wallet");
+      const vol = claimed.args.volatility ?? 3;
+      const binStep = claimed.args.bin_step ?? 80;
+      const wallet = await getWalletBalances();
+      const amount = computeDeployAmount(wallet.sol, vol);
+      const bins = computeBinRange(vol, binStep);
+
+      const redeployResult = await executeTool("deploy_position", {
+        pool_address: claimed.args.pool_address,
+        pool_name: claimed.pool_name,
+        amount_y: amount,
+        bins_below: bins.binsBelow,
+        bins_above: bins.binsAbove,
+        strategy: "bid_ask",
+        bin_step: binStep,
+        volatility: vol,
+      });
+
+      if (redeployResult?.error || redeployResult?.blocked) {
+        log("rebalance", `Redeploy after rebalance failed: ${redeployResult?.error ?? redeployResult?.reason}`);
+      } else {
+        log("rebalance", `Redeploy success for ${claimed.pool_name} — new position at current active bin`);
+        execution.rebalance_deploy = redeployResult;
+      }
+    } catch (e: any) {
+      log("rebalance_error", `Redeploy failed: ${e?.message}`);
+    }
+  }
+
   const failed = execution?.error || execution?.blocked;
   const finalStatus: PendingStatus = failed ? "failed" : "executed";
   const errorMsg = execution?.error || (execution?.blocked ? `blocked: ${execution.reason}` : null);
