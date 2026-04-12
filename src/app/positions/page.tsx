@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Position {
   position: string;
@@ -89,6 +89,8 @@ export default function PositionsPage() {
   const [data, setData] = useState<any>(null);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [refreshing, setRefreshing] = useState(false);
+  const [closing, setClosing] = useState<string | null>(null);
+  const [closeResult, setCloseResult] = useState<{ address: string; status: string } | null>(null);
   const [, setTick] = useState(0);
 
   const load = useCallback(async () => {
@@ -121,6 +123,38 @@ export default function PositionsPage() {
   }, []);
 
   const manualRefresh = () => { setRefreshing(true); load(); };
+
+  const closePosition = async (positionAddress: string, pair: string) => {
+    if (!confirm(`Close posisi ${pair}? Modal + fee akan dikembalikan ke wallet. Ini TIDAK bisa dibatalkan.`)) return;
+    setClosing(positionAddress);
+    setCloseResult(null);
+    try {
+      const res = await fetch("/api/positions/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position_address: positionAddress }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setCloseResult({ address: positionAddress, status: "executing" });
+      // Poll until position disappears
+      const start = Date.now();
+      const poll = setInterval(async () => {
+        if (Date.now() - start > 3 * 60_000) { clearInterval(poll); setClosing(null); return; }
+        const posRes = await fetch("/api/positions").then((r) => r.json()).catch(() => null);
+        if (!posRes) return;
+        const stillOpen = (posRes.positions ?? []).some((p: any) => p.position === positionAddress);
+        if (!stillOpen) {
+          clearInterval(poll);
+          setClosing(null);
+          setCloseResult({ address: positionAddress, status: "closed" });
+          setData(posRes);
+        }
+      }, 3000);
+    } catch (e: any) {
+      alert(`Close gagal: ${e.message}`);
+      setClosing(null);
+    }
+  };
 
   if (!data) return <div className="text-(--muted) text-sm p-4">Loading positions...</div>;
 
@@ -250,6 +284,41 @@ export default function PositionsPage() {
                           : ""
                   }
                 </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="px-4 py-3 border-t border-(--border) flex gap-2 flex-wrap items-center">
+              {closing === p.position ? (
+                <div className="flex items-center gap-2 text-sm text-yellow-300">
+                  <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                  Menutup posisi — menunggu konfirmasi on-chain...
+                </div>
+              ) : closeResult?.address === p.position && closeResult.status === "closed" ? (
+                <div className="text-sm text-green-400 font-medium">✅ Posisi berhasil ditutup — modal + fee kembali ke wallet</div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => closePosition(p.position, p.pair)}
+                    disabled={!!closing}
+                    className="px-4 py-2 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/40 hover:bg-red-500/25 disabled:opacity-40 transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                    Close Position
+                  </button>
+                  {health.level === "critical" && (
+                    <span className="text-[10px] text-red-400 animate-pulse">
+                      ← Threshold terlewati — sebaiknya close sekarang
+                    </span>
+                  )}
+                  {health.level === "healthy" && (
+                    <span className="text-[10px] text-(--muted)">
+                      Posisi sehat — close hanya jika ingin take profit
+                    </span>
+                  )}
+                </>
               )}
             </div>
 

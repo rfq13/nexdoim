@@ -577,13 +577,21 @@ interface RunResult {
   at: number;
 }
 
+function stripInternalJson(text: string): string {
+  return text
+    .replace(/DECISION_JSON:\s*\{[\s\S]*?\}\s*$/m, "")
+    .replace(/MANAGEMENT_JSON:\s*\[[\s\S]*?\]\s*$/m, "")
+    .trim();
+}
+
 function classifyOutput(run: CronRunDetail): { status: RunStatus; output: string } {
   if (run.success === false) {
     return { status: "error", output: run.error || run.output || "Run gagal tanpa detail" };
   }
-  const text = run.output ?? "";
-  if (text.startsWith("SKIPPED:")) return { status: "skipped", output: text.slice(8).trim() };
-  if (text.startsWith("ERROR:"))   return { status: "error",   output: text.slice(6).trim() };
+  const raw = run.output ?? "";
+  if (raw.startsWith("SKIPPED:")) return { status: "skipped", output: raw.slice(8).trim() };
+  if (raw.startsWith("ERROR:"))   return { status: "error",   output: raw.slice(6).trim() };
+  const text = stripInternalJson(raw);
   return { status: "done", output: text || "Run selesai — tidak ada output tertulis." };
 }
 
