@@ -8,7 +8,7 @@ import { createServer } from "http";
 import { parse } from "url";
 import { loadConfig } from "./src/lib/config";
 import { initCron } from "./src/lib/cron";
-import { startPolling, sendMessage, isEnabled as telegramEnabled } from "./src/lib/telegram";
+import { startPolling, sendMessage, isEnabled as telegramEnabled, initTelegram } from "./src/lib/telegram";
 import { ensureDefaultStrategies } from "./src/lib/strategy-library";
 import { agentLoop } from "./src/lib/agent";
 import { config } from "./src/lib/config";
@@ -52,6 +52,7 @@ async function main() {
   console.log("[meridian] Cron jobs started");
 
   // 5. Start Telegram bot (long polling)
+  await initTelegram();
   if (await telegramEnabled()) {
     startPolling(async (text: string) => {
       try {

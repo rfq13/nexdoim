@@ -10,6 +10,12 @@ type FieldDef =
   | { type: "select"; label: string; options: string[]; description?: string };
 
 const SECTION_FIELDS: Record<string, Record<string, FieldDef>> = {
+  safety: {
+    autoDeploy:                   { type: "boolean", label: "Auto-Deploy Enabled", description: "⚠️ ON = agent OTOMATIS deploy tanpa approve manual (selama rate limit & gate lolos). OFF = semua deploy butuh konfirmasi manusia." },
+    autoDeployMaxPerHour:         { type: "number", label: "Max Auto-Deploy / Jam", min: 0, max: 10, step: 1, description: "Batas deploy otomatis per jam. Jika tercapai, fallback ke HITL manual." },
+    autoDeployMaxPerDay:          { type: "number", label: "Max Auto-Deploy / Hari", min: 0, max: 20, step: 1, description: "Batas deploy otomatis per hari. Jika tercapai, fallback ke HITL manual." },
+    autoDeployRequireNoBearish:   { type: "boolean", label: "Block Auto saat BEARISH", description: "Jika ON dan market BEARISH, auto-deploy dimatikan — butuh konfirmasi manual." },
+  },
   screening: {
     minFeeActiveTvlRatio: { type: "number", label: "Min Fee/Active TVL Ratio", step: 0.01, min: 0, description: "Rasio minimum fee terhadap TVL aktif (misal: 0.02 = 2%)" },
     minTvl:               { type: "number", label: "Min TVL ($)", min: 0, step: 1000, description: "Total value locked minimum dalam pool" },
@@ -68,6 +74,7 @@ const SECTION_FIELDS: Record<string, Record<string, FieldDef>> = {
 };
 
 const SECTION_TITLES: Record<string, string> = {
+  safety:     "Safety & Auto-Deploy",
   screening:  "Screening & Filter Pool",
   management: "Manajemen Posisi",
   risk:       "Risk Control",

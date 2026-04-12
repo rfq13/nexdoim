@@ -10,7 +10,8 @@
 import { supabase } from "./db";
 import { log } from "./logger";
 import { executeTool } from "./tools/executor";
-import { sendHTML, notifyDeploy } from "./telegram";
+import { sendHTML } from "./telegram";
+import { config } from "./config";
 
 export type PendingStatus = "pending" | "approved" | "executed" | "rejected" | "failed" | "expired";
 
@@ -122,8 +123,11 @@ export interface ApprovalResult {
 /**
  * Approve a pending decision and execute it. Atomic — safe to call
  * from both web and Telegram concurrently (second caller gets a "not pending" response).
+ *
+ * @param reasoning — WHY the approver chose to approve. For auto-approve,
+ *   this is the system-generated justification from safety checks.
  */
-export async function approvePendingDecision(id: number, resolvedBy: "web" | "telegram"): Promise<ApprovalResult> {
+export async function approvePendingDecision(id: number, resolvedBy: "web" | "telegram" | "auto", reasoning?: string): Promise<ApprovalResult> {
   const claimed = await claimPending(id, "approved", resolvedBy);
   if (!claimed) {
     const current = await getPendingDecision(id);
@@ -136,10 +140,20 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
     };
   }
 
+  // Persist reasoning alongside the decision row
+  if (reasoning) {
+    await supabase.from("pending_decisions")
+      .update({ error: `Approved: ${reasoning}` })
+      .eq("id", id)
+      .then(() => {}, () => {});
+  }
+
   // Announce approval to Telegram (dual-channel visibility)
-  const sourceLabel = resolvedBy === "web" ? "web UI" : "Telegram";
+  const sourceLabels: Record<string, string> = { web: "web UI", telegram: "Telegram", auto: "Auto-Deploy" };
+  const sourceLabel = sourceLabels[resolvedBy] ?? resolvedBy;
+  const reasonLine = reasoning ? `\nAlasan: ${reasoning}` : "";
   await sendHTML(
-    `🟢 <b>Approved via ${sourceLabel}</b> — <code>#${claimed.id}</code>\nExecuting ${claimed.action}: ${claimed.pool_name ?? claimed.pool_address?.slice(0, 8) ?? "?"}...`,
+    `🟢 <b>Approved via ${sourceLabel}</b> — <code>#${claimed.id}</code>\nExecuting ${claimed.action}: ${claimed.pool_name ?? claimed.pool_address?.slice(0, 8) ?? "?"}${reasonLine}`,
   ).catch(() => {});
 
   // Execute the underlying tool
@@ -212,7 +226,8 @@ export async function rejectPendingDecision(id: number, resolvedBy: "web" | "tel
     if (updated) Object.assign(claimed, updated);
   }
 
-  const sourceLabel = resolvedBy === "web" ? "web UI" : "Telegram";
+  const sourceLabels: Record<string, string> = { web: "web UI", telegram: "Telegram", auto: "Auto-Safety" };
+  const sourceLabel = sourceLabels[resolvedBy] ?? resolvedBy;
   await sendHTML(
     `🔴 <b>Rejected via ${sourceLabel}</b> — <code>#${claimed.id}</code>\n${claimed.action}: ${claimed.pool_name ?? claimed.pool_address?.slice(0, 8) ?? "?"}${reason ? `\nAlasan: ${reason}` : ""}`,
   ).catch(() => {});
@@ -222,6 +237,91 @@ export async function rejectPendingDecision(id: number, resolvedBy: "web" | "tel
     status: "rejected",
     decision: claimed,
   };
+}
+
+// ─── Auto-Deploy Orchestrator ─────────────────────────────────
+
+interface AutoDeployCheck {
+  allowed: boolean;
+  reasoning: string;
+}
+
+async function checkAutoDeployRateLimit(): Promise<AutoDeployCheck> {
+  const maxHour = config.safety.autoDeployMaxPerHour;
+  const maxDay = config.safety.autoDeployMaxPerDay;
+
+  const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+
+  const [hourResult, dayResult] = await Promise.all([
+    supabase.from("pending_decisions")
+      .select("id", { count: "exact" })
+      .eq("resolved_by", "auto")
+      .eq("action", "deploy")
+      .in("status", ["approved", "executed"])
+      .gte("resolved_at", oneHourAgo),
+    supabase.from("pending_decisions")
+      .select("id", { count: "exact" })
+      .eq("resolved_by", "auto")
+      .eq("action", "deploy")
+      .in("status", ["approved", "executed"])
+      .gte("resolved_at", dayStart.toISOString()),
+  ]);
+
+  const hourCount = hourResult.count ?? 0;
+  const dayCount = dayResult.count ?? 0;
+
+  if (hourCount >= maxHour) {
+    return { allowed: false, reasoning: `Rate limit per jam tercapai (${hourCount}/${maxHour})` };
+  }
+  if (dayCount >= maxDay) {
+    return { allowed: false, reasoning: `Rate limit per hari tercapai (${dayCount}/${maxDay})` };
+  }
+
+  return {
+    allowed: true,
+    reasoning: `Rate limit OK (jam: ${hourCount}/${maxHour}, hari: ${dayCount}/${maxDay})`,
+  };
+}
+
+/**
+ * Try to auto-approve a pending decision if autoDeploy is enabled and
+ * all safety gates pass. Returns the reasoning for whatever happened
+ * (approved, rate-limited, bearish-blocked, etc.).
+ *
+ * Called from runScreeningCycle after creating a pending_decision row.
+ */
+export async function tryAutoApprove(id: number, marketRegime: string): Promise<{
+  autoApproved: boolean;
+  reasoning: string;
+}> {
+  if (!config.safety.autoDeploy) {
+    return { autoApproved: false, reasoning: "Auto-deploy dimatikan — menunggu konfirmasi manual" };
+  }
+
+  // Gate: bearish market
+  if (config.safety.autoDeployRequireNoBearish && marketRegime === "BEARISH") {
+    return { autoApproved: false, reasoning: "Market BEARISH + autoDeployRequireNoBearish=true — butuh konfirmasi manual" };
+  }
+
+  // Gate: rate limit
+  const rateCheck = await checkAutoDeployRateLimit();
+  if (!rateCheck.allowed) {
+    return { autoApproved: false, reasoning: rateCheck.reasoning + " — butuh konfirmasi manual" };
+  }
+
+  // All gates passed — auto-approve with reasoning
+  const reasoning = `Auto-deploy approved: ${rateCheck.reasoning}, market=${marketRegime}`;
+  log("auto_deploy", `Auto-approving #${id}: ${reasoning}`);
+
+  const result = await approvePendingDecision(id, "auto", reasoning);
+
+  if (!result.success) {
+    return { autoApproved: false, reasoning: `Auto-approve gagal: ${result.error}` };
+  }
+
+  return { autoApproved: true, reasoning };
 }
 
 /**

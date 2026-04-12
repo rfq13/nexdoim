@@ -19,7 +19,7 @@ import { stageSignals } from "./signal-tracker";
 import { runStorage, type LogEntry, type RunContext } from "./run-context";
 import { supabase } from "./db";
 import { parseDecisionJson, validateDecision } from "./screening-parser";
-import { createPendingDecision } from "./pending-decisions";
+import { createPendingDecision, tryAutoApprove } from "./pending-decisions";
 
 // ─── Market Context ──────────────────────────────────────────
 async function getMarketContext(): Promise<string> {
@@ -445,23 +445,37 @@ export async function runScreeningCycle({ silent = false } = {}) {
           log("screening_error", "Gagal membuat pending_decision di database");
           screenReport += `\n\n---\n❌ **HITL:** gagal simpan pending decision ke database`;
         } else {
-          log("screening", `HITL pending #${pending.id}: ${decision.pool_name ?? pool?.name}`);
-          // Fire-and-forget Telegram notification (non-blocking)
-          notifyPendingDecision({
-            id: pending.id,
-            action: "deploy",
-            poolName: decision.pool_name ?? pool?.name,
-            poolAddress: decision.pool_address,
-            amountSol: deployAmount,
-            strategy,
-            binsBelow,
-            binsAbove,
-            reason: decision.reason,
-            risks: decision.risks ?? [],
-            expiresInMin: 30,
-          }).catch((e: any) => log("telegram_error", `notifyPendingDecision failed: ${e.message}`));
+          log("screening", `Pending #${pending.id}: ${decision.pool_name ?? pool?.name}`);
 
-          screenReport += `\n\n---\n🔔 **Pending Approval** — <code>#${pending.id}</code>\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Bins: below=${binsBelow}, above=${binsAbove}\n- Alasan: ${decision.reason ?? "(tidak ada)"}\n\nKonfirmasi via dashboard atau Telegram: \`/approve ${pending.id}\` / \`/reject ${pending.id}\``;
+          // Extract market regime from context string for auto-deploy gate
+          const regimeMatch = marketCtx.match(/Market:\s*(\w+)/);
+          const marketRegime = regimeMatch?.[1] ?? "NEUTRAL";
+
+          // Try auto-approve if autoDeploy is enabled
+          const autoResult = await tryAutoApprove(pending.id, marketRegime);
+
+          if (autoResult.autoApproved) {
+            log("auto_deploy", `#${pending.id} auto-approved: ${autoResult.reasoning}`);
+            screenReport += `\n\n---\n🤖 **Auto-Deploy** — #${pending.id}\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Alasan agent: ${decision.reason ?? "(tidak ada)"}\n- **Reasoning auto-approve:** ${autoResult.reasoning}`;
+          } else {
+            // Fall back to manual HITL — notify user
+            log("screening", `#${pending.id} menunggu konfirmasi manual: ${autoResult.reasoning}`);
+            notifyPendingDecision({
+              id: pending.id,
+              action: "deploy",
+              poolName: decision.pool_name ?? pool?.name,
+              poolAddress: decision.pool_address,
+              amountSol: deployAmount,
+              strategy,
+              binsBelow,
+              binsAbove,
+              reason: decision.reason,
+              risks: decision.risks ?? [],
+              expiresInMin: 30,
+            }).catch((e: any) => log("telegram_error", `notifyPendingDecision failed: ${e.message}`));
+
+            screenReport += `\n\n---\n🔔 **Pending Approval** — #${pending.id}\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Alasan agent: ${decision.reason ?? "(tidak ada)"}\n- **Kenapa butuh manual:** ${autoResult.reasoning}\n\nKonfirmasi via dashboard atau Telegram: \`/approve ${pending.id}\` / \`/reject ${pending.id}\``;
+          }
         }
       }
     }

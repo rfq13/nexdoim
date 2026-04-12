@@ -1,11 +1,19 @@
 import { log } from "./logger";
 import { getSecret } from "./config";
+import { supabase } from "./db";
 
 let TOKEN: string | null = null;
 let BASE: string | null = null;
 let chatId: string | null = null;
+let _allowedPhone: string | null = null;
 let _offset = 0;
 let _polling = false;
+
+function normalizePhone(phone: string): string {
+  let p = phone.replace(/[^0-9]/g, "");
+  if (p.startsWith("0")) p = "62" + p.slice(1);
+  return p;
+}
 
 async function refreshToken() {
   TOKEN =
@@ -13,8 +21,47 @@ async function refreshToken() {
     process.env.TELEGRAM_BOT_TOKEN ||
     null;
   BASE = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
+
+  if (!_allowedPhone) {
+    const raw = (await getSecret("TELEGRAM_ALLOWED_PHONE")) || process.env.TELEGRAM_ALLOWED_PHONE || "";
+    _allowedPhone = raw ? normalizePhone(raw) : null;
+  }
 }
 
+// ─── Persistence ─────────────────────────────────────────────
+async function loadChatIdFromDB(): Promise<string | null> {
+  try {
+    const { data } = await supabase
+      .from("state")
+      .select("data")
+      .eq("id", "telegram_chat_id")
+      .maybeSingle();
+    return data?.data?.chat_id ?? null;
+  } catch { return null; }
+}
+
+async function saveChatIdToDB(id: string) {
+  try {
+    await supabase.from("state").upsert(
+      { id: "telegram_chat_id", data: { chat_id: id, verified_at: new Date().toISOString() } },
+      { onConflict: "id" },
+    );
+    log("telegram", `Chat ID ${id} persisted to DB`);
+  } catch (e: any) {
+    log("telegram_error", `Failed to persist chat ID: ${e.message}`);
+  }
+}
+
+export async function initTelegram() {
+  await refreshToken();
+  const saved = await loadChatIdFromDB();
+  if (saved) {
+    chatId = saved;
+    log("telegram", `Loaded verified chat ID from DB: ${chatId}`);
+  }
+}
+
+// ─── Sending ─────────────────────────────────────────────────
 export async function isEnabled() {
   await refreshToken();
   return !!TOKEN;
@@ -55,15 +102,54 @@ export async function sendHTML(html: string) {
   }
 }
 
+async function sendToChat(targetChatId: string, text: string, opts: Record<string, any> = {}) {
+  await refreshToken();
+  if (!TOKEN) return;
+  try {
+    await fetch(`${BASE}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: targetChatId, text: text.slice(0, 4096), ...opts }),
+    });
+  } catch (e: any) {
+    log("telegram_error", `sendToChat failed: ${e.message}`);
+  }
+}
+
+async function requestContactShare(targetChatId: string) {
+  await refreshToken();
+  if (!TOKEN) return;
+  await fetch(`${BASE}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: targetChatId,
+      text: "Untuk keamanan, saya perlu verifikasi nomor telepon Anda.\n\nTekan tombol di bawah untuk share kontak Anda.",
+      reply_markup: {
+        keyboard: [[{ text: "📱 Share Contact", request_contact: true }]],
+        one_time_keyboard: true,
+        resize_keyboard: true,
+      },
+    }),
+  }).catch((e: any) => log("telegram_error", `requestContactShare failed: ${e.message}`));
+}
+
 export function setChatId(id: string) {
   chatId = id;
 }
 
+// ─── Polling ─────────────────────────────────────────────────
 export async function startPolling(onMessage: (text: string) => Promise<void>) {
   await refreshToken();
   if (!TOKEN) return;
   _polling = true;
   log("telegram", "Bot polling started");
+
+  // Ensure we have a persisted chat_id loaded
+  if (!chatId) {
+    const saved = await loadChatIdFromDB();
+    if (saved) { chatId = saved; log("telegram", `Loaded chat ID from DB: ${chatId}`); }
+  }
 
   while (_polling) {
     try {
@@ -80,14 +166,51 @@ export async function startPolling(onMessage: (text: string) => Promise<void>) {
       for (const update of data.result || []) {
         _offset = update.update_id + 1;
         const msg = update.message;
-        if (!msg?.text) continue;
+        if (!msg) continue;
         const incomingChatId = String(msg.chat.id);
-        if (!chatId) {
-          chatId = incomingChatId;
-          log("telegram", `Registered chat ID: ${chatId}`);
-          await sendMessage("Connected! I'm your LP agent.");
+
+        // ── Contact verification flow ─────────────────────────
+        if (msg.contact && !chatId) {
+          const contactPhone = normalizePhone(msg.contact.phone_number || "");
+          if (_allowedPhone && contactPhone === _allowedPhone) {
+            chatId = incomingChatId;
+            await saveChatIdToDB(chatId);
+            await sendToChat(incomingChatId, "✅ Nomor terverifikasi! Anda sekarang terhubung sebagai admin.\n\nKetik /help untuk daftar perintah.", {
+              reply_markup: { remove_keyboard: true },
+            });
+            log("telegram", `Verified and registered chat ID: ${chatId} (phone: ${contactPhone})`);
+          } else {
+            await sendToChat(incomingChatId, `❌ Nomor ${msg.contact.phone_number} tidak diizinkan. Bot ini hanya untuk admin yang terdaftar.`, {
+              reply_markup: { remove_keyboard: true },
+            });
+            log("telegram_warn", `Rejected phone: ${contactPhone} (expected: ${_allowedPhone})`);
+          }
+          continue;
         }
-        if (incomingChatId !== chatId) continue;
+
+        // ── First message from unknown user → ask for contact ──
+        if (!chatId) {
+          if (_allowedPhone) {
+            await requestContactShare(incomingChatId);
+            log("telegram", `Unknown user ${incomingChatId} — requesting contact verification`);
+          } else {
+            // No phone restriction configured — legacy behavior: accept first user
+            chatId = incomingChatId;
+            await saveChatIdToDB(chatId);
+            await sendMessage("Connected! I'm your LP agent.\n\n⚠️ Tip: set TELEGRAM_ALLOWED_PHONE untuk keamanan.");
+            log("telegram", `Registered chat ID (no phone check): ${chatId}`);
+          }
+          continue;
+        }
+
+        // ── Reject messages from non-verified users ───────────
+        if (incomingChatId !== chatId) {
+          log("telegram_warn", `Ignored message from unauthorized chat: ${incomingChatId}`);
+          continue;
+        }
+
+        // ── Forward text messages to handler ──────────────────
+        if (!msg.text) continue;
         await onMessage(msg.text);
       }
     } catch (e: any) {
@@ -101,6 +224,8 @@ export async function startPolling(onMessage: (text: string) => Promise<void>) {
 export function stopPolling() {
   _polling = false;
 }
+
+// ─── Notification helpers ────────────────────────────────────
 
 export async function notifyDeploy({
   pair,

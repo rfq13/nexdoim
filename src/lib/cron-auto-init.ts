@@ -13,6 +13,7 @@
 import { initCron } from "./cron";
 import { loadConfig } from "./config";
 import { ensureDefaultStrategies } from "./strategy-library";
+import { initTelegram } from "./telegram";
 
 const g = globalThis as any;
 
@@ -23,6 +24,7 @@ if (!g.__meridian_cron_auto_init_started && process.env.DISABLE_CRON_AUTO_INIT !
     try {
       await loadConfig();
       await ensureDefaultStrategies();
+      await initTelegram();
       await initCron();
       console.log("[cron-auto-init] scheduler started");
     } catch (e: any) {

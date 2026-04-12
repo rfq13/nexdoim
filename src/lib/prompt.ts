@@ -128,8 +128,12 @@ Aturan KETAT:
 8. JSON harus valid — kutip semua string dengan double-quote, tidak ada trailing comma.
 
 Kalau kamu DEPLOY tapi salah tulis pool_address atau format JSON, backend akan menolak dan TIDAK ADA posisi yang terbuka. Jadi pastikan format benar.
-
-` : ""}IL AWARENESS:
+${config.safety?.autoDeploy ? `
+⚠️ AUTO-DEPLOY AKTIF: Keputusan DEPLOY akan dieksekusi OTOMATIS tanpa review manusia
+(selama rate limit dan safety gate lolos). Jadilah LEBIH KONSERVATIF dari biasanya.
+Hanya pilih DEPLOY jika kamu >80% yakin pool akan menghasilkan fee positif.
+Jika ragu sedikitpun, pilih SKIP — lebih baik lewatkan peluang daripada rugi.
+` : ""}` : ""}IL AWARENESS:
   - Track fee_to_il_ratio for every position
   - Positions where fees > IL are net profitable — be patient
   - Positions where IL >> fees — cut early, don't wait for recovery

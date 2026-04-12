@@ -40,17 +40,27 @@ function formatRemaining(expiresAt: string): string {
 
 export function PendingDecisions() {
   const [decisions, setDecisions] = useState<PendingDecision[]>([]);
+  const [recentResolved, setRecentResolved] = useState<PendingDecision[]>([]);
   const [busy, setBusy] = useState<Record<number, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0);
   const [discussingId, setDiscussingId] = useState<number | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/pending-decisions?status=pending", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setDecisions(data.decisions ?? []);
+      const [pendingRes, recentRes] = await Promise.all([
+        fetch("/api/pending-decisions?status=pending", { cache: "no-store" }),
+        fetch("/api/pending-decisions?status=&limit=10", { cache: "no-store" }),
+      ]);
+      if (pendingRes.ok) {
+        const data = await pendingRes.json();
+        setDecisions(data.decisions ?? []);
+      }
+      if (recentRes.ok) {
+        const data = await recentRes.json();
+        setRecentResolved((data.decisions ?? []).filter((d: PendingDecision) => d.status !== "pending"));
+      }
       setError(null);
     } catch (e: any) {
       setError(e.message);
@@ -134,7 +144,7 @@ export function PendingDecisions() {
     load();
   };
 
-  if (decisions.length === 0 && !error && !discussingId) return null;
+  if (decisions.length === 0 && recentResolved.length === 0 && !error && !discussingId) return null;
 
   return (
     <div className="space-y-3">
@@ -265,6 +275,65 @@ export function PendingDecisions() {
           );
         })}
       </div>
+
+      {/* ── Recent resolved decisions with reasoning ─────────── */}
+      {recentResolved.length > 0 && (
+        <div className="pt-2">
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className="flex items-center gap-2 text-xs text-(--muted) hover:text-(--text) transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${showHistory ? "rotate-180" : ""}`}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+            <span className="font-semibold uppercase tracking-wider">
+              Riwayat Keputusan ({recentResolved.length})
+            </span>
+          </button>
+
+          {showHistory && (
+            <div className="mt-2 space-y-1.5">
+              {recentResolved.map((d) => {
+                const statusStyles: Record<string, string> = {
+                  executed: "bg-green-500/10 text-green-400 border-green-500/30",
+                  approved: "bg-blue-500/10 text-blue-400 border-blue-500/30",
+                  rejected: "bg-red-500/10 text-red-300 border-red-500/30",
+                  failed:   "bg-red-500/15 text-red-400 border-red-500/40",
+                  expired:  "bg-white/5 text-(--muted) border-(--border)",
+                };
+                const style = statusStyles[d.status] ?? "bg-white/5 text-(--muted) border-(--border)";
+                const resolvedVia = d.resolved_by ?? "?";
+                const reasoning = d.error ?? d.reason ?? "";
+
+                return (
+                  <div key={d.id} className={`border rounded-lg px-3 py-2.5 ${style}`}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold uppercase bg-black/20">
+                          {d.status}
+                        </span>
+                        <span className="text-xs font-medium truncate">
+                          {d.action.toUpperCase()} {d.pool_name ?? d.pool_address?.slice(0, 12) ?? "?"}
+                        </span>
+                        <span className="text-[10px] font-mono text-(--muted)">#{d.id}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-(--muted) flex-shrink-0">
+                        <span>via {resolvedVia}</span>
+                        <span>{d.resolved_at ? formatAgo(d.resolved_at) : ""}</span>
+                      </div>
+                    </div>
+                    {reasoning && (
+                      <div className="mt-1.5 text-xs opacity-80 leading-relaxed">
+                        {reasoning}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Inline discussion modal — rendered at root of this component so it
           overlays the whole dashboard regardless of scroll position */}
