@@ -564,21 +564,29 @@ export async function runScreeningCycle({ silent = false } = {}) {
   return screenReport;
 }
 
-async function runBriefing() {
+async function runBriefing(): Promise<string> {
   try {
     const briefing = await generateBriefing();
     if (await telegramEnabled()) await sendHTML(briefing);
     await setLastBriefingDate();
-  } catch (error: any) { log("cron_error", `Morning briefing failed: ${error.message}`); }
+    return briefing ?? "Briefing dikirim ke Telegram";
+  } catch (error: any) {
+    log("cron_error", `Morning briefing failed: ${error.message}`);
+    return `Briefing gagal: ${error.message}`;
+  }
 }
 
-async function maybeRunMissedBriefing() {
+async function maybeRunMissedBriefing(): Promise<string> {
   const todayUtc = new Date().toISOString().slice(0, 10);
   const lastSent = await getLastBriefingDate();
-  if (lastSent === todayUtc) return;
-  if (new Date().getUTCHours() < 1) return;
+  if (lastSent === todayUtc) {
+    return `Briefing hari ini (${todayUtc}) sudah terkirim — tidak perlu kirim ulang`;
+  }
+  if (new Date().getUTCHours() < 1) {
+    return `Belum waktunya briefing (UTC hour < 1) — skip`;
+  }
   log("cron", `Missed briefing detected — sending now`);
-  await runBriefing();
+  return await runBriefing();
 }
 
 export function startCronJobs() {

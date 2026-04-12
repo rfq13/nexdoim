@@ -49,12 +49,14 @@ function getLevel(pct: number): HealthLevel {
   return "healthy";
 }
 
-function overallHealth(indicators: Array<{ pct: number }>): { level: HealthLevel; label: string } {
+function overallHealth(indicators: Array<{ pct: number }>, isOOR: boolean): { level: HealthLevel; label: string } {
   const maxPct = Math.max(...indicators.map((i) => i.pct), 0);
-  const level = getLevel(maxPct);
+  let level = getLevel(maxPct);
+  // OOR = not earning fees → minimum "warning" even if bars are low
+  if (isOOR && level === "healthy") level = "warning";
   const labels: Record<HealthLevel, string> = {
     healthy: "Sehat",
-    warning: "Waspada",
+    warning: isOOR && maxPct < 40 ? "OOR — Idle" : "Waspada",
     danger: "Bahaya",
     critical: "Close Imminent",
   };
@@ -216,7 +218,7 @@ export default function PositionsPage() {
           },
         ];
 
-        const health = overallHealth(indicators);
+        const health = overallHealth(indicators, !p.in_range);
         const hc = LEVEL_COLORS[health.level];
         const totalFees = (p.unclaimed_fees_usd ?? 0) + (p.collected_fees_usd ?? 0);
 
