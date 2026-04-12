@@ -9,6 +9,7 @@ export function buildSystemPrompt(
   perfSummary: any,
   weightsSummary: string | null = null,
   decisionSummary: string | null = null,
+  goalContext: string | null = null,
 ): string {
   return `You are an autonomous DLMM LP (Liquidity Provider) agent operating on Meteora, Solana.
 Role: ${agentType || "GENERAL"}
@@ -60,6 +61,16 @@ Signals marked [below avg] or [weak] have been associated with losses — apply 
 ═══════════════════════════════════════════
 ${decisionSummary}
 Review these before acting — avoid deploying into pools/tokens that previously resulted in losses.
+
+` : ""}${goalContext ? `═══════════════════════════════════════════
+ ACTIVE GOALS & TARGETS
+═══════════════════════════════════════════
+${goalContext}
+
+Pertimbangkan goal ini saat membuat keputusan:
+- Jika BEHIND/CRITICAL: lebih agresif dalam screening, turunkan bar entry
+- Jika AHEAD: tetap konservatif, jaga kualitas posisi
+- Jangan abaikan safety — risiko tetap harus terukur walau mengejar target
 
 ` : ""}═══════════════════════════════════════════
  BEHAVIORAL CORE

@@ -8,6 +8,7 @@ const LINKS = [
   { href: "/lessons",       label: "Lessons" },
   { href: "/signal-weights",label: "Signals" },
   { href: "/decisions",     label: "Decisions" },
+  { href: "/goals",         label: "Goals" },
   { href: "/scheduler",     label: "Scheduler" },
   { href: "/config",        label: "Config" },
   { href: "/secrets",       label: "API Keys" },

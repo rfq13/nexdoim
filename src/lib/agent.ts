@@ -95,12 +95,15 @@ export async function agentLoop(
   // Load adaptive intelligence context (non-critical — never block the agent loop)
   let weightsSummary: string | null = null;
   let decisionSummary: string | null = null;
+  let goalContext: string | null = null;
   if (agentType === "SCREENER" || agentType === "MANAGER") {
-    [weightsSummary, decisionSummary] = await Promise.all([
+    const { getGoalContextForPrompt } = await import("./goals");
+    [weightsSummary, decisionSummary, goalContext] = await Promise.all([
       agentType === "SCREENER" && config.darwin?.enabled
         ? getWeightsSummary().catch(() => null)
         : Promise.resolve(null),
       getDecisionSummary(6).catch(() => null),
+      getGoalContextForPrompt().catch(() => null),
     ]);
   }
 
@@ -113,6 +116,7 @@ export async function agentLoop(
     perfSummary,
     weightsSummary,
     decisionSummary,
+    goalContext,
   );
 
   const messages: any[] = [
