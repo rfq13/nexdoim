@@ -19,7 +19,7 @@ import { stageSignals } from "./signal-tracker";
 import { runStorage, type LogEntry, type RunContext } from "./run-context";
 import { supabase } from "./db";
 import { parseDecisionJson, validateDecision, parseManagementJson, validateManagementDecisions } from "./screening-parser";
-import { createPendingDecision, tryAutoApprove } from "./pending-decisions";
+import { createPendingDecision, tryAutoApprove, hasPendingForPosition, hasPendingForPool } from "./pending-decisions";
 
 // ─── Market Context ──────────────────────────────────────────
 async function getMarketContext(): Promise<string> {
@@ -295,6 +295,13 @@ export async function runManagementCycle({ silent = false } = {}) {
         }
 
         for (const d of valid) {
+          // Dedup: skip if already a pending CLOSE for this position
+          if (await hasPendingForPosition(d.position_address)) {
+            log("management", `Skipping duplicate pending CLOSE for ${d.pair} (${d.position_address.slice(0, 8)}...)`);
+            mgmtReport += `\n\nℹ️ CLOSE ${d.pair} sudah ada pending sebelumnya — skip duplikat`;
+            continue;
+          }
+
           const pending = await createPendingDecision({
             action: "close",
             pool_address: undefined,
@@ -493,6 +500,12 @@ export async function runScreeningCycle({ silent = false } = {}) {
           initial_value_usd: solPrice > 0 ? deployAmount * solPrice : undefined,
         };
 
+        // Dedup: skip if already a pending DEPLOY for this pool
+        if (decision.pool_address && await hasPendingForPool(decision.pool_address)) {
+          log("screening", `Skipping duplicate pending DEPLOY for ${decision.pool_name ?? pool?.name}`);
+          screenReport += `\n\n---\nℹ️ DEPLOY ${decision.pool_name ?? pool?.name} sudah ada pending sebelumnya — skip duplikat`;
+        } else {
+
         const pending = await createPendingDecision({
           action: "deploy",
           pool_address: decision.pool_address,
@@ -538,6 +551,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
             screenReport += `\n\n---\n🔔 **Pending Approval** — #${pending.id}\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Alasan agent: ${decision.reason ?? "(tidak ada)"}\n- **Kenapa butuh manual:** ${autoResult.reasoning}\n\nKonfirmasi via dashboard atau Telegram: \`/approve ${pending.id}\` / \`/reject ${pending.id}\``;
           }
         }
+        } // end else (dedup check)
       }
     }
   } catch (error: any) {

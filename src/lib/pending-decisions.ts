@@ -325,6 +325,29 @@ export async function tryAutoApprove(id: number, marketRegime: string): Promise<
 }
 
 /**
+ * Check if a pending (unresolved) decision already exists for this
+ * position_address or pool_address. Prevents duplicate pending rows
+ * when cron cycles run repeatedly for the same asset.
+ */
+export async function hasPendingForPosition(positionAddress: string): Promise<boolean> {
+  const { count } = await supabase
+    .from("pending_decisions")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending")
+    .contains("args", { position_address: positionAddress });
+  return (count ?? 0) > 0;
+}
+
+export async function hasPendingForPool(poolAddress: string): Promise<boolean> {
+  const { count } = await supabase
+    .from("pending_decisions")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending")
+    .eq("pool_address", poolAddress);
+  return (count ?? 0) > 0;
+}
+
+/**
  * Mark all expired pending rows. Called occasionally from the cron tick.
  */
 export async function expirePendingDecisions(): Promise<number> {
