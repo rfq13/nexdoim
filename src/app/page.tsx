@@ -11,8 +11,10 @@ interface Position {
   pnl_usd: number;
   pnl_pct: number;
   unclaimed_fees_usd: number;
+  total_value_usd: number;
   in_range: boolean;
   age_minutes: number;
+  minutes_out_of_range: number | null;
   deposit_usd?: number;
 }
 
@@ -119,6 +121,7 @@ export default function Dashboard() {
   const [perf, setPerf] = useState<{ summary: PerfSummary | null; history: PerfRow[] }>({ summary: null, history: [] });
   const [weights, setWeights] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
@@ -136,10 +139,22 @@ export default function Dashboard() {
       setLastRefresh(new Date());
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-refresh every 30s for near-realtime position/PnL data
+  useEffect(() => {
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  const manualRefresh = () => {
+    setRefreshing(true);
+    load();
+  };
 
   // ── derived values ──
   const sol = wallet?.sol ?? 0;
@@ -148,8 +163,8 @@ export default function Dashboard() {
   const openCount = positions?.total_positions ?? 0;
   const posRows: Position[] = positions?.positions ?? [];
 
-  // SOL deployed (estimate from position deposit values)
-  const deployedUsd = posRows.reduce((s: number, p: Position) => s + (p.deposit_usd ?? 0), 0);
+  // Current value of all open positions (total_value_usd from on-chain data)
+  const deployedUsd = posRows.reduce((s: number, p: Position) => s + (p.total_value_usd ?? p.deposit_usd ?? 0), 0);
   const portfolioPct = totalUsd > 0 ? deployedUsd / totalUsd : 0;
 
   // Cumulative PnL line from closed positions (oldest → newest)
@@ -189,8 +204,16 @@ export default function Dashboard() {
               Diperbarui {lastRefresh.toLocaleTimeString("id-ID")}
             </span>
           )}
-          <button onClick={load} className="text-xs px-3 py-1.5 border border-(--border) rounded-lg hover:border-(--accent) transition-colors">
-            Refresh
+          <button
+            onClick={manualRefresh}
+            disabled={refreshing}
+            className="text-xs px-3 py-1.5 border border-(--border) rounded-lg hover:border-(--accent) transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+          >
+            {refreshing ? (
+              <><span className="w-2 h-2 rounded-full bg-(--accent) animate-pulse" />Memuat...</>
+            ) : (
+              "Refresh"
+            )}
           </button>
         </div>
       </div>
@@ -388,34 +411,80 @@ export default function Dashboard() {
           )}
         </ChartCard>
 
-        {/* Open positions PnL bars */}
-        <ChartCard title="PnL Posisi Terbuka">
+        {/* Open positions cards */}
+        <ChartCard title="Posisi Terbuka">
           {posRows.length > 0 ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {posRows.map((p) => {
-                const absMax = Math.max(...posRows.map((r) => Math.abs(r.pnl_usd)), 1);
-                const color = p.pnl_usd >= 0 ? "var(--green)" : "var(--red)";
+                const pnlColor = p.pnl_usd >= 0 ? "text-green-400" : "text-red-400";
+                const feesTotal = (p.unclaimed_fees_usd ?? 0);
                 return (
-                  <div key={p.position} className="space-y-0.5">
-                    <div className="flex justify-between text-xs text-(--muted)">
-                      <span className="truncate max-w-40">{p.pair}</span>
-                      <span className="flex items-center gap-2">
-                        <span className={`px-1.5 rounded text-[10px] ${p.in_range ? "bg-green-900/30 text-(--green)" : "bg-red-900/30 text-(--red)"}`}>
-                          {p.in_range ? "IN" : "OOR"}
+                  <div key={p.position} className="border border-(--border) rounded-lg p-3 bg-black/10 space-y-2">
+                    {/* Row 1: pair + status + pnl */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-semibold text-sm truncate">{p.pair}</span>
+                        <Tooltip text={p.in_range
+                          ? "In Range — posisi kamu aktif menerima swap & menghasilkan fee"
+                          : "Out of Range — posisi idle, tidak menghasilkan fee. Kalau lama, management cycle akan sarankan CLOSE."
+                        }>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold cursor-help ${
+                            p.in_range ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"
+                          }`}>
+                            {p.in_range ? "IN RANGE" : "OOR"}
+                          </span>
+                        </Tooltip>
+                      </div>
+                      <Tooltip text="PnL = perubahan nilai posisi sejak dibuka (termasuk impermanent loss). Positif hijau = untung, merah = rugi.">
+                        <span className={`font-bold font-mono text-sm tabular-nums cursor-help ${pnlColor}`}>
+                          {p.pnl_usd >= 0 ? "+" : ""}${p.pnl_usd} ({p.pnl_pct}%)
                         </span>
-                        {p.age_minutes}m
-                      </span>
+                      </Tooltip>
                     </div>
-                    <HBar
-                      label=""
-                      value={p.pnl_usd}
-                      max={absMax}
-                      color={color}
-                      fmt={(v) => `$${v >= 0 ? "+" : ""}${v.toFixed(2)}`}
-                    />
+
+                    {/* Row 2: key metrics with tooltips */}
+                    <div className="flex gap-3 sm:gap-5 text-xs flex-wrap">
+                      <Tooltip text="Fee yang sudah dihasilkan tapi belum ditarik ke wallet. Akan otomatis ter-claim saat posisi ditutup. Tidak bisa hangus.">
+                        <span className="cursor-help text-(--muted) hover:text-(--text) transition-colors">
+                          Fees: <span className="text-(--text) font-mono">${feesTotal.toFixed(2)}</span>
+                        </span>
+                      </Tooltip>
+                      <Tooltip text="Nilai total posisi saat ini (token base + SOL yang dikunci di pool).">
+                        <span className="cursor-help text-(--muted) hover:text-(--text) transition-colors">
+                          Value: <span className="text-(--text) font-mono">${p.total_value_usd}</span>
+                        </span>
+                      </Tooltip>
+                      <Tooltip text="Berapa lama posisi sudah dibuka. Close rules management baru aktif setelah 60 menit.">
+                        <span className="cursor-help text-(--muted) hover:text-(--text) transition-colors">
+                          Age: <span className="text-(--text) font-mono">{p.age_minutes ?? "?"}m</span>
+                        </span>
+                      </Tooltip>
+                      {!p.in_range && (p.minutes_out_of_range ?? 0) > 0 && (
+                        <Tooltip text={`Sudah di luar range selama ${p.minutes_out_of_range}m. Selama OOR, posisi tidak menghasilkan fee. Management akan sarankan CLOSE setelah ${30}m OOR.`}>
+                          <span className="cursor-help text-red-400/80 hover:text-red-300 transition-colors">
+                            OOR: <span className="font-mono">{p.minutes_out_of_range}m</span>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </div>
+
+                    {/* Row 3: mini PnL bar */}
+                    <div className="flex items-center gap-2">
+                      <Tooltip text={`PnL bar — hijau = untung, merah = rugi. Saat ini ${p.pnl_usd >= 0 ? "untung" : "rugi"} $${Math.abs(p.pnl_usd).toFixed(2)}.`}>
+                        <div className="flex-1 h-1.5 bg-(--border) rounded-full overflow-hidden cursor-help">
+                          <div
+                            className={`h-full rounded-full transition-all ${p.pnl_usd >= 0 ? "bg-green-500" : "bg-red-500"}`}
+                            style={{ width: `${Math.min(100, Math.max(5, Math.abs(p.pnl_pct) * 2))}%` }}
+                          />
+                        </div>
+                      </Tooltip>
+                    </div>
                   </div>
                 );
               })}
+              <a href="/positions" className="text-xs text-(--accent) hover:underline">
+                Lihat detail + health gauge →
+              </a>
             </div>
           ) : (
             <EmptyState text="Tidak ada posisi terbuka saat ini" />
@@ -457,6 +526,17 @@ function EmptyState({ text }: { text: string }) {
     <div className="flex items-center justify-center h-16 text-xs text-(--muted) text-center">
       {text}
     </div>
+  );
+}
+
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="relative group/tip inline-flex">
+      {children}
+      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 rounded-lg bg-(--bg) border border-(--border) text-[11px] text-(--text) leading-snug whitespace-normal w-52 sm:w-64 shadow-xl opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150 z-30 text-center">
+        {text}
+      </span>
+    </span>
   );
 }
 

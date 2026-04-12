@@ -18,7 +18,7 @@ import { getPerformanceSummary } from "./lessons";
 import { stageSignals } from "./signal-tracker";
 import { runStorage, type LogEntry, type RunContext } from "./run-context";
 import { supabase } from "./db";
-import { parseDecisionJson, validateDecision } from "./screening-parser";
+import { parseDecisionJson, validateDecision, parseManagementJson, validateManagementDecisions } from "./screening-parser";
 import { createPendingDecision, tryAutoApprove } from "./pending-decisions";
 
 // ─── Market Context ──────────────────────────────────────────
@@ -271,6 +271,67 @@ export async function runManagementCycle({ silent = false } = {}) {
       config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 4096
     );
     mgmtReport = content;
+
+    // ── HITL: parse MANAGEMENT_JSON for CLOSE decisions ────────
+    const mgmtDecisions = parseManagementJson(content);
+    if (!mgmtDecisions) {
+      log("management_warn", "LLM tidak menghasilkan blok MANAGEMENT_JSON — skip auto-execute");
+      mgmtReport += `\n\n---\n⚠️ Tidak ada blok MANAGEMENT_JSON di output.`;
+    } else {
+      const closeDecisions = mgmtDecisions.decisions.filter((d) => d.action === "CLOSE");
+      const stayCount = mgmtDecisions.decisions.filter((d) => d.action === "STAY").length;
+      const rebalanceCount = mgmtDecisions.decisions.filter((d) => d.action === "REBALANCE").length;
+
+      log("management", `Parsed: ${closeDecisions.length} CLOSE, ${stayCount} STAY, ${rebalanceCount} REBALANCE`);
+
+      if (closeDecisions.length === 0) {
+        mgmtReport += `\n\n---\n✅ Semua posisi STAY (${stayCount} posisi)${rebalanceCount > 0 ? `, ${rebalanceCount} perlu rebalance` : ""}`;
+      } else {
+        const { valid, invalid } = validateManagementDecisions(closeDecisions, positions);
+
+        for (const inv of invalid) {
+          log("management_error", `Invalid CLOSE decision: ${inv.reason}`);
+          mgmtReport += `\n\n❌ CLOSE gagal validasi: ${inv.reason}`;
+        }
+
+        for (const d of valid) {
+          const pending = await createPendingDecision({
+            action: "close",
+            pool_address: undefined,
+            pool_name: d.pair ?? undefined,
+            args: { position_address: d.position_address },
+            reason: d.reason,
+            risks: d.risks ?? [],
+          });
+
+          if (!pending) {
+            log("management_error", `Gagal buat pending close untuk ${d.pair}`);
+            continue;
+          }
+
+          log("management", `Pending CLOSE #${pending.id}: ${d.pair} — ${d.reason}`);
+
+          // Try auto-approve if autoDeploy (reuse same toggle — applies to all auto actions)
+          const regimeMatch = marketCtx.match(/Market:\s*(\w+)/);
+          const regime = regimeMatch?.[1] ?? "NEUTRAL";
+          const autoResult = await tryAutoApprove(pending.id, regime);
+
+          if (autoResult.autoApproved) {
+            mgmtReport += `\n\n🤖 **Auto-Close** #${pending.id}: ${d.pair}\n- Alasan: ${d.reason ?? "—"}\n- Reasoning: ${autoResult.reasoning}`;
+          } else {
+            notifyPendingDecision({
+              id: pending.id,
+              action: "close",
+              poolName: d.pair,
+              reason: d.reason,
+              risks: d.risks ?? [],
+              expiresInMin: 30,
+            }).catch(() => {});
+            mgmtReport += `\n\n🔔 **Pending Close** #${pending.id}: ${d.pair}\n- Alasan: ${d.reason ?? "—"}\n- Kenapa manual: ${autoResult.reasoning}`;
+          }
+        }
+      }
+    }
   } catch (error: any) {
     log("cron_error", `Management cycle failed: ${error.message}`);
     mgmtReport = `Management cycle failed: ${error.message}`;

@@ -10,6 +10,7 @@ export async function GET() {
     llm: config.llm,
     darwin: config.darwin,
     strategy: config.strategy,
+    safety: config.safety,
   });
 }
 
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest) {
     // Direct section save: { section: "screening", data: { minBinStep: 20, ... } }
     if (body.section && body.data && typeof body.data === "object") {
       const { section, data } = body;
-      const allowed = ["screening", "management", "schedule", "risk", "llm", "darwin", "strategy"];
+      const allowed = ["screening", "management", "schedule", "risk", "llm", "darwin", "strategy", "safety"];
       if (!allowed.includes(section)) {
         return NextResponse.json({ error: `Unknown section: ${section}` }, { status: 400 });
       }

@@ -91,6 +91,26 @@ MANAGEMENT — REBALANCE when:
   - OOR but pool metrics (volume, fee_tvl) still strong
   - volume > ${config.management.minVolumeToRebalance} indicates continued interest
 
+${agentType === "MANAGER" ? `═══════════════════════════════════════════
+ STRUCTURED OUTPUT — WAJIB (MANAGER ONLY)
+═══════════════════════════════════════════
+Backend TIDAK percaya pada prose reasoning. Setelah menulis laporan management lengkap,
+kamu WAJIB mengakhiri respons dengan SATU blok JSON array:
+
+MANAGEMENT_JSON: [{"action":"CLOSE","position_address":"<address_persis_dari_input>","pair":"<pair_name>","reason":"<alasan singkat>","risks":["<risk>"]},{"action":"STAY","position_address":"<address>","pair":"<pair>","reason":"<alasan>"}]
+
+Aturan KETAT:
+1. SETIAP posisi dari input HARUS ada di array — satu entry per posisi.
+2. action: "CLOSE", "STAY", atau "REBALANCE" (uppercase).
+3. position_address HARUS persis dari data posisi yang diberikan — jangan dikarang.
+4. JANGAN bungkus dengan backtick fence.
+5. Blok harus di akhir respons (setelah laporan markdown).
+6. HANYA CLOSE yang akan dieksekusi on-chain. STAY dan REBALANCE hanya untuk catatan.
+7. JSON harus valid array — kutip semua string dengan double-quote.
+
+Kalau CLOSE tapi position_address salah, backend akan menolak dan posisi TIDAK akan ditutup.
+` : ""}
+
 SCREENING — DEPLOY when ALL are true:
   1. Pool passes all screening thresholds
   2. mtf_validated = true (consistent across timeframes)

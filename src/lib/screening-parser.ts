@@ -116,3 +116,89 @@ export function validateDecision(
 
   return { valid: true };
 }
+
+// ─── Management Decisions ─────────────────────────────────────
+
+export interface ManagementDecision {
+  action: "CLOSE" | "STAY" | "REBALANCE";
+  position_address: string;
+  pair?: string;
+  reason?: string;
+  risks?: string[];
+}
+
+export interface ManagementDecisions {
+  decisions: ManagementDecision[];
+}
+
+/**
+ * Extract MANAGEMENT_JSON block from the manager agent's report.
+ * Format: MANAGEMENT_JSON: [{"action":"CLOSE","position_address":"...","reason":"..."}, ...]
+ */
+export function parseManagementJson(text: string): ManagementDecisions | null {
+  if (!text) return null;
+
+  const markerIdx = text.lastIndexOf("MANAGEMENT_JSON:");
+  if (markerIdx === -1) return null;
+
+  const tail = text.slice(markerIdx + "MANAGEMENT_JSON:".length);
+  const bracketIdx = tail.indexOf("[");
+  if (bracketIdx === -1) return null;
+
+  let depth = 0;
+  let end = -1;
+  let inString = false;
+  let escape = false;
+  for (let i = bracketIdx; i < tail.length; i++) {
+    const c = tail[i];
+    if (escape) { escape = false; continue; }
+    if (c === "\\") { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === "[") depth++;
+    else if (c === "]") {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+
+  if (end === -1) return null;
+  const jsonStr = tail.slice(bracketIdx, end + 1);
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (!Array.isArray(parsed)) return null;
+    const decisions = parsed.filter(
+      (d: any) => d && typeof d === "object" && ["CLOSE", "STAY", "REBALANCE"].includes(d.action),
+    );
+    return { decisions };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate management decisions against the list of open positions.
+ * Returns only valid CLOSE decisions with matching position_address.
+ */
+export function validateManagementDecisions(
+  decisions: ManagementDecision[],
+  positions: Array<{ position: string; pair?: string }>,
+): { valid: ManagementDecision[]; invalid: Array<{ decision: ManagementDecision; reason: string }> } {
+  const posMap = new Map(positions.map((p) => [p.position, p]));
+  const valid: ManagementDecision[] = [];
+  const invalid: Array<{ decision: ManagementDecision; reason: string }> = [];
+
+  for (const d of decisions) {
+    if (d.action !== "CLOSE") continue; // Only CLOSE needs execution; STAY/REBALANCE are informational
+    if (!d.position_address) {
+      invalid.push({ decision: d, reason: "missing position_address" });
+      continue;
+    }
+    if (!posMap.has(d.position_address)) {
+      invalid.push({ decision: d, reason: `position ${d.position_address.slice(0, 12)}... not in open positions` });
+      continue;
+    }
+    valid.push({ ...d, pair: d.pair ?? posMap.get(d.position_address)?.pair });
+  }
+  return { valid, invalid };
+}
