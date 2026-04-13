@@ -128,7 +128,9 @@ export default function SchedulerPage() {
   const [triggering, setTriggering] = useState<string | null>(null);
   const [, setTick] = useState(0);
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
-  const [historyByJob, setHistoryByJob] = useState<Record<string, RunSummary[]>>({});
+  const [historyByJob, setHistoryByJob] = useState<
+    Record<string, RunSummary[]>
+  >({});
   const [loadingHistory, setLoadingHistory] = useState<string | null>(null);
   const [openRun, setOpenRun] = useState<RunDetail | null>(null);
   const [loadingRun, setLoadingRun] = useState(false);
@@ -159,7 +161,9 @@ export default function SchedulerPage() {
   const loadHistory = useCallback(async (jobName: string) => {
     setLoadingHistory(jobName);
     try {
-      const res = await fetch(`/api/cron/runs?job=${jobName}&limit=20`, { cache: "no-store" });
+      const res = await fetch(`/api/cron/runs?job=${jobName}&limit=20`, {
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setHistoryByJob((prev) => ({ ...prev, [jobName]: data.runs ?? [] }));
@@ -174,7 +178,10 @@ export default function SchedulerPage() {
   useEffect(() => {
     if (expandedJob) loadHistory(expandedJob);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.jobs.find((j) => j.name === expandedJob)?.runCount, status?.jobs.find((j) => j.name === expandedJob)?.errorCount]);
+  }, [
+    status?.jobs.find((j) => j.name === expandedJob)?.runCount,
+    status?.jobs.find((j) => j.name === expandedJob)?.errorCount,
+  ]);
 
   const toggleHistory = (jobName: string) => {
     if (expandedJob === jobName) {
@@ -228,7 +235,8 @@ export default function SchedulerPage() {
         <div>
           <h1 className="text-2xl font-bold">Scheduler</h1>
           <p className="text-xs text-(--muted) mt-1">
-            Status cron jobs yang berjalan di dalam proses Next.js (single-dyno Heroku)
+            Status cron jobs yang berjalan di dalam proses Next.js (single-dyno
+            Heroku)
           </p>
         </div>
         <button
@@ -249,12 +257,16 @@ export default function SchedulerPage() {
       <div className="bg-(--card) border border-(--border) rounded-xl p-5">
         <div className="flex items-start justify-between flex-wrap gap-4">
           <div className="flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-              running ? "bg-green-500/20" : "bg-red-500/20"
-            }`}>
-              <div className={`w-3 h-3 rounded-full ${
-                running ? "bg-green-400 animate-pulse" : "bg-red-400"
-              }`} />
+            <div
+              className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                running ? "bg-green-500/20" : "bg-red-500/20"
+              }`}
+            >
+              <div
+                className={`w-3 h-3 rounded-full ${
+                  running ? "bg-green-400 animate-pulse" : "bg-red-400"
+                }`}
+              />
             </div>
             <div>
               <div className="text-lg font-semibold">
@@ -270,37 +282,42 @@ export default function SchedulerPage() {
 
           <div className="flex gap-6 text-xs">
             <div>
-              <div className="text-(--muted) uppercase tracking-wider mb-1">Process Uptime</div>
+              <div className="text-(--muted) uppercase tracking-wider mb-1">
+                Process Uptime
+              </div>
               <div className="font-mono text-sm">
                 {status ? formatUptime(status.process_uptime_sec) : "—"}
               </div>
             </div>
             <div>
-              <div className="text-(--muted) uppercase tracking-wider mb-1">Started At</div>
+              <div className="text-(--muted) uppercase tracking-wider mb-1">
+                Started At
+              </div>
               <div className="font-mono text-sm">
-                {status ? new Date(status.process_started_at).toLocaleString() : "—"}
+                {status
+                  ? new Date(status.process_started_at).toLocaleString()
+                  : "—"}
               </div>
             </div>
           </div>
 
-          <div className={`min-w-60 rounded-lg border px-3 py-2 text-xs ${
-            providerCircuit?.open
-              ? "border-red-500/40 bg-red-500/10 text-red-300"
-              : "border-(--border) bg-black/10 text-(--muted)"
-          }`}>
+          <div
+            className={`min-w-60 rounded-lg border px-3 py-2 text-xs ${
+              providerCircuit?.open
+                ? "border-red-500/40 bg-red-500/10 text-red-300"
+                : "border-(--border) bg-black/10 text-(--muted)"
+            }`}
+          >
             <div className="font-semibold uppercase tracking-wide text-[10px] mb-1">
               Provider Circuit Breaker
             </div>
+            <div>Status: {providerCircuit?.open ? "OPEN" : "CLOSED"}</div>
             <div>
-              Status: {providerCircuit?.open ? "OPEN" : "CLOSED"}
-            </div>
-            <div>
-              Consecutive errors: {providerCircuit?.consecutive_errors ?? 0}/{providerCircuit?.threshold ?? 0}
+              Consecutive errors: {providerCircuit?.consecutive_errors ?? 0}/
+              {providerCircuit?.threshold ?? 0}
             </div>
             {providerCircuit?.open && (
-              <div>
-                Cooldown: {providerCircuit.remaining_sec}s tersisa
-              </div>
+              <div>Cooldown: {providerCircuit.remaining_sec}s tersisa</div>
             )}
           </div>
         </div>
@@ -316,7 +333,8 @@ export default function SchedulerPage() {
 
         {status?.jobs.length === 0 && (
           <div className="text-sm text-(--muted) border border-dashed border-(--border) rounded-lg p-4 text-center">
-            Belum ada data job — tunggu beberapa detik setelah server start, atau trigger manual.
+            Belum ada data job — tunggu beberapa detik setelah server start,
+            atau trigger manual.
           </div>
         )}
 
@@ -345,7 +363,10 @@ export default function SchedulerPage() {
           const history = historyByJob[job.name] ?? [];
 
           return (
-            <div key={job.name} className="bg-(--card) border border-(--border) rounded-xl overflow-hidden">
+            <div
+              key={job.name}
+              className="bg-(--card) border border-(--border) rounded-xl overflow-hidden"
+            >
               <div className="p-4">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0 flex-1">
@@ -353,7 +374,9 @@ export default function SchedulerPage() {
                       <h3 className="font-semibold text-sm">
                         {JOB_LABELS[job.name] ?? job.name}
                       </h3>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium ${statusColor}`}>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium ${statusColor}`}
+                      >
                         {statusLabel}
                       </span>
                     </div>
@@ -361,7 +384,9 @@ export default function SchedulerPage() {
                       {JOB_DESCRIPTIONS[job.name] ?? ""}
                     </p>
                     <div className="mt-1">
-                      <code className="text-[10px] text-(--muted) font-mono">{job.schedule}</code>
+                      <code className="text-[10px] text-(--muted) font-mono">
+                        {job.schedule}
+                      </code>
                     </div>
                   </div>
 
@@ -376,13 +401,23 @@ export default function SchedulerPage() {
                     >
                       {isExpanded ? "Tutup Riwayat" : "Lihat Riwayat"}
                     </button>
-                    {(job.name === "management" || job.name === "screening") && (
+                    {(job.name === "management" ||
+                      job.name === "screening") && (
                       <button
-                        onClick={() => trigger(job.name === "management" ? "run_management" : "run_screening")}
+                        onClick={() =>
+                          trigger(
+                            job.name === "management"
+                              ? "run_management"
+                              : "run_screening",
+                          )
+                        }
                         disabled={triggering !== null || job.busy}
                         className="text-[10px] px-2.5 py-1 rounded-md border border-(--border) hover:border-(--accent) hover:text-(--accent) disabled:opacity-30 transition-colors whitespace-nowrap"
                       >
-                        {triggering === (job.name === "management" ? "run_management" : "run_screening")
+                        {triggering ===
+                        (job.name === "management"
+                          ? "run_management"
+                          : "run_screening")
                           ? "Triggered"
                           : "Run Now"}
                       </button>
@@ -392,21 +427,40 @@ export default function SchedulerPage() {
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
                   <div>
-                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">Last Run</div>
-                    <div className="font-mono">{formatAgo(job.lastRunAt, now)}</div>
-                  </div>
-                  <div>
-                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">Next Run</div>
-                    <div className="font-mono">{formatCountdown(nextRun, now)}</div>
-                  </div>
-                  <div>
-                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">Duration</div>
-                    <div className="font-mono">{formatDuration(job.lastDurationMs)}</div>
-                  </div>
-                  <div>
-                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">Runs / Errors</div>
+                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">
+                      Last Run
+                    </div>
                     <div className="font-mono">
-                      {job.runCount} / <span className={job.errorCount > 0 ? "text-red-400" : ""}>{job.errorCount}</span>
+                      {formatAgo(job.lastRunAt, now)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">
+                      Next Run
+                    </div>
+                    <div className="font-mono">
+                      {formatCountdown(nextRun, now)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">
+                      Duration
+                    </div>
+                    <div className="font-mono">
+                      {formatDuration(job.lastDurationMs)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-(--muted) uppercase tracking-wider text-[10px] mb-0.5">
+                      Runs / Errors
+                    </div>
+                    <div className="font-mono">
+                      {job.runCount} /{" "}
+                      <span
+                        className={job.errorCount > 0 ? "text-red-400" : ""}
+                      >
+                        {job.errorCount}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -448,32 +502,44 @@ export default function SchedulerPage() {
                           onClick={() => openRunDetail(run.id)}
                           className="w-full flex items-center gap-3 px-3 py-2 rounded-md hover:bg-white/5 transition-colors text-left"
                         >
-                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                            run.success === null
-                              ? "bg-(--muted)"
-                              : run.success
-                                ? "bg-green-400"
-                                : "bg-red-400"
-                          }`} />
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                              run.success === null
+                                ? "bg-(--muted)"
+                                : run.success
+                                  ? "bg-green-400"
+                                  : "bg-red-400"
+                            }`}
+                          />
                           <span className="text-xs font-mono text-(--muted) flex-shrink-0 w-32">
                             {new Date(run.started_at).toLocaleString()}
                           </span>
                           <span className="text-xs font-mono text-(--muted) flex-shrink-0 w-14">
                             {formatDuration(run.duration_ms)}
                           </span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium flex-shrink-0 ${
-                            run.success === null
-                              ? "bg-white/5 text-(--muted)"
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium flex-shrink-0 ${
+                              run.success === null
+                                ? "bg-white/5 text-(--muted)"
+                                : run.success
+                                  ? "bg-green-500/10 text-green-400"
+                                  : "bg-red-500/10 text-red-400"
+                            }`}
+                          >
+                            {run.success === null
+                              ? "?"
                               : run.success
-                                ? "bg-green-500/10 text-green-400"
-                                : "bg-red-500/10 text-red-400"
-                          }`}>
-                            {run.success === null ? "?" : run.success ? "OK" : "FAIL"}
+                                ? "OK"
+                                : "FAIL"}
                           </span>
                           {run.error && (
-                            <span className="text-xs text-red-300 truncate">{run.error}</span>
+                            <span className="text-xs text-red-300 truncate">
+                              {run.error}
+                            </span>
                           )}
-                          <span className="ml-auto text-[10px] text-(--muted) flex-shrink-0">view →</span>
+                          <span className="ml-auto text-[10px] text-(--muted) flex-shrink-0">
+                            view →
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -487,11 +553,25 @@ export default function SchedulerPage() {
 
       {/* ── Heroku Notes ─────────────────────────────────────── */}
       <div className="bg-(--card) border border-(--border) rounded-xl p-4 text-xs text-(--muted) space-y-1.5">
-        <div className="font-semibold text-(--text) mb-2">Catatan Deployment</div>
-        <div>• Scheduler jalan dalam proses yang sama dengan web server (<code className="font-mono text-(--text)">server.ts</code>).</div>
-        <div>• Di Heroku Eco/Free dyno, dyno tidur setelah 30 menit idle — cron ikut berhenti. Pakai Basic+ atau keep-alive ping.</div>
-        <div>• Process uptime pendek = proses baru restart (deploy atau crash). Cek <code className="font-mono text-(--text)">heroku logs --tail</code>.</div>
-        <div>• Job status &quot;OVERDUE&quot; = telat lebih dari 2× interval → scheduler mungkin stuck.</div>
+        <div className="font-semibold text-(--text) mb-2">
+          Catatan Deployment
+        </div>
+        <div>
+          • Scheduler jalan dalam proses yang sama dengan web server (
+          <code className="font-mono text-(--text)">server.ts</code>).
+        </div>
+        <div>
+          • Di Heroku Eco/Free dyno, dyno tidur setelah 30 menit idle — cron
+          ikut berhenti. Pakai Basic+ atau keep-alive ping.
+        </div>
+        <div>
+          • Process uptime pendek = proses baru restart (deploy atau crash). Cek{" "}
+          <code className="font-mono text-(--text)">heroku logs --tail</code>.
+        </div>
+        <div>
+          • Job status &quot;OVERDUE&quot; = telat lebih dari 2× interval →
+          scheduler mungkin stuck.
+        </div>
       </div>
 
       {/* ── Run Detail Modal ─────────────────────────────────── */}
@@ -499,7 +579,10 @@ export default function SchedulerPage() {
         <RunDetailModal
           run={openRun}
           loading={loadingRun}
-          onClose={() => { setOpenRun(null); setLoadingRun(false); }}
+          onClose={() => {
+            setOpenRun(null);
+            setLoadingRun(false);
+          }}
         />
       )}
     </div>
@@ -508,12 +591,20 @@ export default function SchedulerPage() {
 
 // ─── Run Detail Modal ─────────────────────────────────────────────
 function RunDetailModal({
-  run, loading, onClose,
-}: { run: RunDetail | null; loading: boolean; onClose: () => void }) {
+  run,
+  loading,
+  onClose,
+}: {
+  run: RunDetail | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
   const [tab, setTab] = useState<"logs" | "output">("logs");
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -539,17 +630,24 @@ function RunDetailModal({
                     {JOB_LABELS[run.job_name] ?? run.job_name}
                   </div>
                   <div className="text-[11px] text-(--muted) font-mono mt-0.5">
-                    {new Date(run.started_at).toLocaleString()} · {formatDuration(run.duration_ms)}
+                    {new Date(run.started_at).toLocaleString()} ·{" "}
+                    {formatDuration(run.duration_ms)}
                   </div>
                 </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold flex-shrink-0 ${
-                  run.success === null
-                    ? "bg-white/5 text-(--muted)"
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold flex-shrink-0 ${
+                    run.success === null
+                      ? "bg-white/5 text-(--muted)"
+                      : run.success
+                        ? "bg-green-500/15 text-green-400"
+                        : "bg-red-500/15 text-red-400"
+                  }`}
+                >
+                  {run.success === null
+                    ? "UNKNOWN"
                     : run.success
-                      ? "bg-green-500/15 text-green-400"
-                      : "bg-red-500/15 text-red-400"
-                }`}>
-                  {run.success === null ? "UNKNOWN" : run.success ? "SUCCESS" : "FAILED"}
+                      ? "SUCCESS"
+                      : "FAILED"}
                 </span>
               </>
             ) : null}
@@ -559,7 +657,14 @@ function RunDetailModal({
             className="text-(--muted) hover:text-(--text) transition-colors p-1 rounded flex-shrink-0"
             title="Tutup (Esc)"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
@@ -594,14 +699,18 @@ function RunDetailModal({
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
           {loading && (
-            <div className="p-8 text-center text-sm text-(--muted)">Memuat...</div>
+            <div className="p-8 text-center text-sm text-(--muted)">
+              Memuat...
+            </div>
           )}
 
           {run && tab === "logs" && (
             <div className="p-0">
               {run.error && (
                 <div className="m-4 border border-red-500/30 bg-red-500/5 rounded-md px-3 py-2 text-xs text-red-300 font-mono">
-                  <div className="font-semibold text-[10px] uppercase tracking-wider mb-1">Error</div>
+                  <div className="font-semibold text-[10px] uppercase tracking-wider mb-1">
+                    Error
+                  </div>
                   {run.error}
                 </div>
               )}
@@ -623,16 +732,27 @@ function RunDetailModal({
                         ? "bg-yellow-500/5 text-yellow-300"
                         : "hover:bg-white/5 text-(--text)";
                     return (
-                      <div key={i} className={`px-4 py-1 flex gap-3 border-b border-(--border)/30 ${rowCls}`}>
+                      <div
+                        key={i}
+                        className={`px-4 py-1 flex gap-3 border-b border-(--border)/30 ${rowCls}`}
+                      >
                         <span className="text-(--muted) flex-shrink-0 w-20">
                           {new Date(entry.ts).toLocaleTimeString()}
                         </span>
-                        <span className={`flex-shrink-0 w-24 uppercase text-[10px] ${
-                          isError ? "text-red-400" : isWarn ? "text-yellow-400" : "text-blue-400"
-                        }`}>
+                        <span
+                          className={`flex-shrink-0 w-24 uppercase text-[10px] ${
+                            isError
+                              ? "text-red-400"
+                              : isWarn
+                                ? "text-yellow-400"
+                                : "text-blue-400"
+                          }`}
+                        >
                           {entry.category}
                         </span>
-                        <span className="break-all whitespace-pre-wrap flex-1">{entry.message}</span>
+                        <span className="break-all whitespace-pre-wrap flex-1">
+                          {entry.message}
+                        </span>
                       </div>
                     );
                   })}

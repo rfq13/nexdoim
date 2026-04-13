@@ -6,40 +6,75 @@ import { log } from "./logger";
 import { getMyPositions, getPositionPnl } from "./tools/dlmm";
 import { getWalletBalances } from "./tools/wallet";
 import { getTopCandidates } from "./tools/screening";
-import { getTokenHolders, getTokenNarrative, getTokenInfo } from "./tools/token";
+import {
+  getTokenHolders,
+  getTokenNarrative,
+  getTokenInfo,
+} from "./tools/token";
 import { checkSmartWalletsOnPool } from "./smart-wallets";
 import { studyTopLPers } from "./tools/study";
-import { getTrackedPosition, getLastBriefingDate, setLastBriefingDate } from "./state";
+import {
+  getTrackedPosition,
+  getLastBriefingDate,
+  setLastBriefingDate,
+} from "./state";
 import { getActiveStrategy } from "./strategy-library";
 import { recordPositionSnapshot, recallForPool } from "./pool-memory";
 import { generateBriefing } from "./briefing";
-import { sendMessage, sendHTML, notifyOutOfRange, notifyPendingDecision, isEnabled as telegramEnabled, startPolling, stopPolling } from "./telegram";
+import {
+  sendMessage,
+  sendHTML,
+  notifyOutOfRange,
+  notifyPendingDecision,
+  isEnabled as telegramEnabled,
+  startPolling,
+  stopPolling,
+} from "./telegram";
 import { registerCronRestarter } from "./tools/executor";
 import { getPerformanceSummary } from "./lessons";
 import { stageSignals } from "./signal-tracker";
 import { runStorage, type LogEntry, type RunContext } from "./run-context";
 import { supabase } from "./db";
-import { parseDecisionJson, validateDecision, parseManagementJson, validateManagementDecisions } from "./screening-parser";
-import { createPendingDecision, tryAutoApprove, hasPendingForPosition, hasPendingForPool } from "./pending-decisions";
+import {
+  parseDecisionJson,
+  validateDecision,
+  parseManagementJson,
+  validateManagementDecisions,
+} from "./screening-parser";
+import {
+  createPendingDecision,
+  tryAutoApprove,
+  hasPendingForPosition,
+  hasPendingForPool,
+} from "./pending-decisions";
 
 // ─── Market Context ──────────────────────────────────────────
 async function getMarketContext(): Promise<string> {
   try {
-    const res = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112");
+    const res = await fetch(
+      "https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112",
+    );
     if (!res.ok) return "SOL price: unavailable";
     const data = await res.json();
     const sol = data.data?.["So11111111111111111111111111111111111111112"];
     const price = parseFloat(sol?.price ?? 0);
 
     // Get 24h price change from CoinGecko-compatible endpoint
-    const cgRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true").catch(() => null);
+    const cgRes = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true",
+    ).catch(() => null);
     let change24h = "?";
     if (cgRes?.ok) {
       const cgData = await cgRes.json();
       change24h = (cgData.solana?.usd_24h_change ?? 0).toFixed(2);
     }
 
-    const regime = parseFloat(change24h) > 5 ? "BULLISH" : parseFloat(change24h) < -5 ? "BEARISH" : "NEUTRAL";
+    const regime =
+      parseFloat(change24h) > 5
+        ? "BULLISH"
+        : parseFloat(change24h) < -5
+          ? "BEARISH"
+          : "NEUTRAL";
     return `SOL: $${price.toFixed(2)} (24h: ${change24h}%) | Market: ${regime}`;
   } catch {
     return "SOL price: fetch failed";
@@ -68,7 +103,11 @@ interface JobHealth {
 const _jobHealth: Record<string, JobHealth> = {};
 const _processStartedAt = Date.now();
 
-function initJob(name: string, schedule: string, intervalMin: number | null): JobHealth {
+function initJob(
+  name: string,
+  schedule: string,
+  intervalMin: number | null,
+): JobHealth {
   if (!_jobHealth[name]) {
     _jobHealth[name] = {
       name,
@@ -109,7 +148,9 @@ async function persistRun(record: {
     });
   } catch (e: any) {
     // Never let persistence failure break the cron loop
-    console.error(`[cron] failed to persist run for ${record.job_name}: ${e?.message ?? e}`);
+    console.error(
+      `[cron] failed to persist run for ${record.job_name}: ${e?.message ?? e}`,
+    );
   }
 }
 
@@ -119,10 +160,17 @@ function stringifyOutput(value: unknown): string | null {
   if (typeof value === "object" && "content" in (value as any)) {
     return String((value as any).content);
   }
-  try { return JSON.stringify(value); } catch { return String(value); }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
-async function trackRun<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
+async function trackRun<T>(
+  name: string,
+  fn: () => Promise<T>,
+): Promise<T | null> {
   const job = _jobHealth[name];
   if (!job) return await fn();
 
@@ -192,7 +240,11 @@ export function triggerManagement(): number {
     if (_managementBusy) {
       log("cron", "Manual management trigger skipped — already running");
       // Still persist so the UI poll finds a row
-      await trackRun("management", async () => "SKIPPED: management sebelumnya masih berjalan — tunggu hingga selesai");
+      await trackRun(
+        "management",
+        async () =>
+          "SKIPPED: management sebelumnya masih berjalan — tunggu hingga selesai",
+      );
       return;
     }
     _managementBusy = true;
@@ -201,7 +253,9 @@ export function triggerManagement(): number {
     } finally {
       _managementBusy = false;
     }
-  })().catch((e: any) => log("cron_error", `triggerManagement failed: ${e?.message ?? e}`));
+  })().catch((e: any) =>
+    log("cron_error", `triggerManagement failed: ${e?.message ?? e}`),
+  );
   return triggeredAt;
 }
 
@@ -209,7 +263,9 @@ export function triggerScreening(): number {
   const triggeredAt = Date.now();
   (async () => {
     await trackRun("screening", () => runScreeningCycle({ silent: true }));
-  })().catch((e: any) => log("cron_error", `triggerScreening failed: ${e?.message ?? e}`));
+  })().catch((e: any) =>
+    log("cron_error", `triggerScreening failed: ${e?.message ?? e}`),
+  );
   return triggeredAt;
 }
 
@@ -226,7 +282,10 @@ export function getCronStatus() {
 }
 
 export async function runManagementCycle({ silent = false } = {}) {
-  log("cron", `Starting management cycle [model: ${config.llm.managementModel}]`);
+  log(
+    "cron",
+    `Starting management cycle [model: ${config.llm.managementModel}]`,
+  );
   let mgmtReport: string | null = null;
   let positions: any[] = [];
 
@@ -235,78 +294,126 @@ export async function runManagementCycle({ silent = false } = {}) {
     positions = livePositions?.positions || [];
     if (positions.length === 0) {
       log("cron", "No open positions — triggering screening");
-      runScreeningCycle().catch((e: any) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      runScreeningCycle().catch((e: any) =>
+        log("cron_error", `Triggered screening failed: ${e.message}`),
+      );
       return "SKIPPED: tidak ada posisi terbuka — screening di-trigger otomatis";
     }
 
     // Trigger screening if under max positions
-    if (positions.length < config.risk.maxPositions && Date.now() - _screeningLastTriggered > 5 * 60_000) {
+    if (
+      positions.length < config.risk.maxPositions &&
+      Date.now() - _screeningLastTriggered > 5 * 60_000
+    ) {
       _screeningLastTriggered = Date.now();
       runScreeningCycle().catch(() => {});
     }
 
     const [positionData, marketCtx] = await Promise.all([
-      Promise.all(positions.map(async (p: any) => {
-        await recordPositionSnapshot(p.pool, p);
-        const pnl = await getPositionPnl({ pool_address: p.pool, position_address: p.position }).catch(() => null);
-        const recall = await recallForPool(p.pool);
-        return { ...p, pnl, recall };
-      })),
+      Promise.all(
+        positions.map(async (p: any) => {
+          await recordPositionSnapshot(p.pool, p);
+          const pnl = await getPositionPnl({
+            pool_address: p.pool,
+            position_address: p.position,
+          }).catch(() => null);
+          const recall = await recallForPool(p.pool);
+          return { ...p, pnl, recall };
+        }),
+      ),
       getMarketContext(),
     ]);
 
-    const positionBlocks = await Promise.all(positionData.map(async (p: any) => {
-      const pnl = p.pnl;
-      const tracked = await getTrackedPosition(p.position).catch(() => null);
-      const vol = tracked?.volatility ?? 0;
-      const initialUsd = tracked?.initialValueUsd ?? 0;
-      const feePct = initialUsd > 0 ? ((p.unclaimed_fees_usd ?? 0) / initialUsd) * 100 : 0;
+    const positionBlocks = await Promise.all(
+      positionData.map(async (p: any) => {
+        const pnl = p.pnl;
+        const tracked = await getTrackedPosition(p.position).catch(() => null);
+        const vol = tracked?.volatility ?? 0;
+        const initialUsd = tracked?.initialValueUsd ?? 0;
+        const feePct =
+          initialUsd > 0 ? ((p.unclaimed_fees_usd ?? 0) / initialUsd) * 100 : 0;
 
-      // Dynamic OOR timeout based on volatility
-      const baseOorMin = config.management.outOfRangeWaitMinutes;
-      const dynamicOorMax = vol >= 8 ? Math.round(baseOorMin * 0.33)
-        : vol >= 5 ? Math.round(baseOorMin * 0.66)
-        : vol >= 2 ? baseOorMin
-        : Math.round(baseOorMin * 2);
+        // Dynamic OOR timeout based on volatility
+        const baseOorMin = config.management.outOfRangeWaitMinutes;
+        const dynamicOorMax =
+          vol >= 8
+            ? Math.round(baseOorMin * 0.33)
+            : vol >= 5
+              ? Math.round(baseOorMin * 0.66)
+              : vol >= 2
+                ? baseOorMin
+                : Math.round(baseOorMin * 2);
 
-      return [
-        `POSITION: ${p.pair} (${p.position})`,
-        `  pool: ${p.pool}`,
-        `  age: ${p.age_minutes ?? "?"}m | in_range: ${p.in_range} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
-        `  volatility: ${vol} | dynamic_oor_max: ${dynamicOorMax}m (based on volatility)`,
-        pnl ? `  pnl_pct: ${pnl.pnl_pct}% | pnl_usd: $${pnl.pnl_usd} | unclaimed_fees: $${pnl.unclaimed_fee_usd} | fee_per_tvl_24h: ${pnl.fee_per_tvl_24h ?? "?"}%` : `  pnl: fetch failed`,
-        pnl ? `  bins: lower=${pnl.lower_bin} upper=${pnl.upper_bin} active=${pnl.active_bin}` : null,
-        initialUsd > 0 ? `  initial_value: $${initialUsd.toFixed(2)} | fee_yield: ${feePct.toFixed(1)}% | take_profit_target: ${config.management.takeProfitFeePct}%` : null,
-        feePct >= config.management.takeProfitFeePct ? `  ⚡ TAKE-PROFIT TARGET REACHED (${feePct.toFixed(1)}% >= ${config.management.takeProfitFeePct}%) — CLOSE recommended` : null,
-        p.instruction ? `  instruction: "${p.instruction}"` : null,
-        p.recall ? `  memory: ${p.recall}` : null,
-      ].filter(Boolean).join("\n");
-    }));
+        return [
+          `POSITION: ${p.pair} (${p.position})`,
+          `  pool: ${p.pool}`,
+          `  age: ${p.age_minutes ?? "?"}m | in_range: ${p.in_range} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
+          `  volatility: ${vol} | dynamic_oor_max: ${dynamicOorMax}m (based on volatility)`,
+          pnl
+            ? `  pnl_pct: ${pnl.pnl_pct}% | pnl_usd: $${pnl.pnl_usd} | unclaimed_fees: $${pnl.unclaimed_fee_usd} | fee_per_tvl_24h: ${pnl.fee_per_tvl_24h ?? "?"}%`
+            : `  pnl: fetch failed`,
+          pnl
+            ? `  bins: lower=${pnl.lower_bin} upper=${pnl.upper_bin} active=${pnl.active_bin}`
+            : null,
+          initialUsd > 0
+            ? `  initial_value: $${initialUsd.toFixed(2)} | fee_yield: ${feePct.toFixed(1)}% | take_profit_target: ${config.management.takeProfitFeePct}%`
+            : null,
+          feePct >= config.management.takeProfitFeePct
+            ? `  ⚡ TAKE-PROFIT TARGET REACHED (${feePct.toFixed(1)}% >= ${config.management.takeProfitFeePct}%) — CLOSE recommended`
+            : null,
+          p.instruction ? `  instruction: "${p.instruction}"` : null,
+          p.recall ? `  memory: ${p.recall}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }),
+    );
     const positionBlocksStr = positionBlocks.join("\n\n");
 
     const { content } = await agentLoop(
       `MANAGEMENT CYCLE — ${positions.length} position(s)\n\nMARKET: ${marketCtx}\n\nPRE-LOADED POSITION DATA:\n${positionBlocksStr}\n\nApply hard close rules. Use dynamic_oor_max per position (NOT the global default). If ⚡ TAKE-PROFIT TARGET REACHED, CLOSE to lock profit. In BEARISH market, lower thresholds. Report format: **[PAIR]** | Age: [X]m | PnL: [X]% | [STAY/CLOSE/REBALANCE]`,
-      config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 4096
+      config.llm.maxSteps,
+      [],
+      "MANAGER",
+      config.llm.managementModel,
+      4096,
     );
     mgmtReport = content;
 
     // ── HITL: parse MANAGEMENT_JSON for CLOSE decisions ────────
     const mgmtDecisions = parseManagementJson(content);
     if (!mgmtDecisions) {
-      log("management_warn", "LLM tidak menghasilkan blok MANAGEMENT_JSON — skip auto-execute");
+      log(
+        "management_warn",
+        "LLM tidak menghasilkan blok MANAGEMENT_JSON — skip auto-execute",
+      );
       mgmtReport += `\n\n---\n⚠️ Tidak ada blok MANAGEMENT_JSON di output.`;
     } else {
-      const actionDecisions = mgmtDecisions.decisions.filter((d) => d.action === "CLOSE" || d.action === "REBALANCE");
-      const stayCount = mgmtDecisions.decisions.filter((d) => d.action === "STAY").length;
-      const closeCount = actionDecisions.filter((d) => d.action === "CLOSE").length;
-      const rebalanceCount = actionDecisions.filter((d) => d.action === "REBALANCE").length;
+      const actionDecisions = mgmtDecisions.decisions.filter(
+        (d) => d.action === "CLOSE" || d.action === "REBALANCE",
+      );
+      const stayCount = mgmtDecisions.decisions.filter(
+        (d) => d.action === "STAY",
+      ).length;
+      const closeCount = actionDecisions.filter(
+        (d) => d.action === "CLOSE",
+      ).length;
+      const rebalanceCount = actionDecisions.filter(
+        (d) => d.action === "REBALANCE",
+      ).length;
 
-      log("management", `Parsed: ${closeCount} CLOSE, ${rebalanceCount} REBALANCE, ${stayCount} STAY`);
+      log(
+        "management",
+        `Parsed: ${closeCount} CLOSE, ${rebalanceCount} REBALANCE, ${stayCount} STAY`,
+      );
 
       if (actionDecisions.length === 0) {
         mgmtReport += `\n\n---\n✅ Semua posisi STAY (${stayCount} posisi)`;
       } else {
-        const { valid, invalid } = validateManagementDecisions(actionDecisions, positions);
+        const { valid, invalid } = validateManagementDecisions(
+          actionDecisions,
+          positions,
+        );
 
         for (const inv of invalid) {
           log("management_error", `Invalid CLOSE decision: ${inv.reason}`);
@@ -316,22 +423,31 @@ export async function runManagementCycle({ silent = false } = {}) {
         for (const d of valid) {
           // Dedup: skip if already a pending action for this position
           if (await hasPendingForPosition(d.position_address)) {
-            log("management", `Skipping duplicate pending ${d.action} for ${d.pair} (${d.position_address.slice(0, 8)}...)`);
+            log(
+              "management",
+              `Skipping duplicate pending ${d.action} for ${d.pair} (${d.position_address.slice(0, 8)}...)`,
+            );
             mgmtReport += `\n\nℹ️ ${d.action} ${d.pair} sudah ada pending sebelumnya — skip duplikat`;
             continue;
           }
 
           // For REBALANCE: args include both close + redeploy info
           const isRebalance = d.action === "REBALANCE";
-          const posData = positions.find((p: any) => p.position === d.position_address);
-          const tracked = posData ? await getTrackedPosition(posData.position).catch(() => null) : null;
-          const rebalanceArgs = isRebalance ? {
-            position_address: d.position_address,
-            pool_address: posData?.pool ?? d.pool_address,
-            rebalance: true,
-            volatility: tracked?.volatility,
-            bin_step: tracked?.binStep,
-          } : { position_address: d.position_address };
+          const posData = positions.find(
+            (p: any) => p.position === d.position_address,
+          );
+          const tracked = posData
+            ? await getTrackedPosition(posData.position).catch(() => null)
+            : null;
+          const rebalanceArgs = isRebalance
+            ? {
+                position_address: d.position_address,
+                pool_address: posData?.pool ?? d.pool_address,
+                rebalance: true,
+                volatility: tracked?.volatility,
+                bin_step: tracked?.binStep,
+              }
+            : { position_address: d.position_address };
 
           const pending = await createPendingDecision({
             action: isRebalance ? "close" : "close", // both execute close; rebalance = close + auto redeploy
@@ -347,7 +463,10 @@ export async function runManagementCycle({ silent = false } = {}) {
             continue;
           }
 
-          log("management", `Pending CLOSE #${pending.id}: ${d.pair} — ${d.reason}`);
+          log(
+            "management",
+            `Pending CLOSE #${pending.id}: ${d.pair} — ${d.reason}`,
+          );
 
           // Try auto-approve if autoDeploy (reuse same toggle — applies to all auto actions)
           const regimeMatch = marketCtx.match(/Market:\s*(\w+)/);
@@ -374,7 +493,8 @@ export async function runManagementCycle({ silent = false } = {}) {
     log("cron_error", `Management cycle failed: ${error.message}`);
     mgmtReport = `Management cycle failed: ${error.message}`;
   } finally {
-    if (!silent && (await telegramEnabled()) && mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
+    if (!silent && (await telegramEnabled()) && mgmtReport)
+      sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
   }
   return mgmtReport;
 }
@@ -400,17 +520,23 @@ export async function runScreeningCycle({ silent = false } = {}) {
         return `SKIPPED: ${msg}`;
       }
     }
-  } catch { /* continue if perf check fails */ }
+  } catch {
+    /* continue if perf check fails */
+  }
 
   let prePositions: any, preBalance: any;
   try {
-    [prePositions, preBalance] = await Promise.all([getMyPositions(), getWalletBalances()]);
+    [prePositions, preBalance] = await Promise.all([
+      getMyPositions(),
+      getWalletBalances(),
+    ]);
     if (prePositions.total_positions >= config.risk.maxPositions) {
       const msg = `Max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`;
       log("cron", `Screening skipped — ${msg}`);
       return `SKIPPED: ${msg}`;
     }
-    const minSol = config.management.deployAmountSol + config.management.gasReserve;
+    const minSol =
+      config.management.deployAmountSol + config.management.gasReserve;
     if (preBalance.sol < minSol) {
       const msg = `Saldo SOL tidak cukup: ${preBalance.sol.toFixed(4)} < ${minSol.toFixed(4)} (deploy ${config.management.deployAmountSol} + reserve ${config.management.gasReserve})`;
       log("cron", `Screening skipped — ${msg}`);
@@ -428,13 +554,18 @@ export async function runScreeningCycle({ silent = false } = {}) {
     if (perf && perf.total_pnl_usd < 0) {
       // Check daily loss (from today's closed positions)
       const todayLoss = Math.abs(perf.total_pnl_usd); // simplified: use total as proxy
-      if (config.safety.maxDailyLossUsd > 0 && todayLoss >= config.safety.maxDailyLossUsd) {
+      if (
+        config.safety.maxDailyLossUsd > 0 &&
+        todayLoss >= config.safety.maxDailyLossUsd
+      ) {
         const msg = `Drawdown gate: loss $${todayLoss.toFixed(2)} >= maxDailyLoss $${config.safety.maxDailyLossUsd}`;
         log("cron", `Screening paused — ${msg}`);
         return `SKIPPED: ${msg}`;
       }
     }
-  } catch { /* continue if check fails */ }
+  } catch {
+    /* continue if check fails */
+  }
 
   _screeningBusy = true;
   log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
@@ -450,7 +581,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${activeStrategy.lpStrategy}`
       : "No active strategy — use default bid_ask.";
 
-    const topCandidates = await getTopCandidates({ limit: 5 }).catch(() => null);
+    const topCandidates = await getTopCandidates({ limit: 5 }).catch(
+      () => null,
+    );
     const candidates = topCandidates?.candidates || [];
 
     const candidateBlocks: string[] = [];
@@ -463,47 +596,67 @@ export async function runScreeningCycle({ silent = false } = {}) {
         mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
         mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
         Promise.resolve(await recallForPool(pool.pool)),
-        i < 3 ? studyTopLPers({ pool_address: pool.pool, limit: 3 }).catch(() => null) : Promise.resolve(null),
+        i < 3
+          ? studyTopLPers({ pool_address: pool.pool, limit: 3 }).catch(
+              () => null,
+            )
+          : Promise.resolve(null),
       ]);
 
       const swVal = sw.status === "fulfilled" ? sw.value : null;
-      const tiVal = ti.status === "fulfilled" ? (ti.value as any)?.results?.[0] : null;
+      const tiVal =
+        ti.status === "fulfilled" ? (ti.value as any)?.results?.[0] : null;
       const nVal = n.status === "fulfilled" ? n.value : null;
 
-      const suggestedBins = computeBinRange(pool.volatility ?? 3, pool.bin_step ?? 80);
+      const suggestedBins = computeBinRange(
+        pool.volatility ?? 3,
+        pool.bin_step ?? 80,
+      );
       const lpersVal = lpers.status === "fulfilled" ? lpers.value : null;
       const lpersPatterns = (lpersVal as any)?.patterns;
 
       // Stage signals for Darwinian learning — captured at deploy time
       stageSignals(pool.pool, {
-        organic_score:         pool.organic_score,
-        fee_tvl_ratio:         pool.fee_active_tvl_ratio,
-        volume:                pool.volume_window,
-        mcap:                  pool.mcap,
-        holder_count:          pool.holders,
+        organic_score: pool.organic_score,
+        fee_tvl_ratio: pool.fee_active_tvl_ratio,
+        volume: pool.volume_window,
+        mcap: pool.mcap,
+        holder_count: pool.holders,
         smart_wallets_present: ((swVal as any)?.in_pool?.length ?? 0) > 0,
-        narrative_quality:     (nVal as any)?.narrative ? "present" : "absent",
-        study_win_rate:        lpersPatterns?.avg_win_rate ?? null,
-        volatility:            pool.volatility ?? null,
-        hive_consensus:        null,
+        narrative_quality: (nVal as any)?.narrative ? "present" : "absent",
+        study_win_rate: lpersPatterns?.avg_win_rate ?? null,
+        volatility: pool.volatility ?? null,
+        hive_consensus: null,
       });
 
-      candidateBlocks.push([
-        `POOL: ${pool.name} (${pool.pool})`,
-        `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}`,
-        `  momentum: trend=${pool.trend_label ?? "?"}, price_5m=${pool.price_change_5m ?? "?"}%, price_1h=${pool.price_change_1h ?? "?"}%, mtf_score=${pool.mtf_score ?? "?"}`,
-        `  suggested_bins: below=${suggestedBins.binsBelow}, above=${suggestedBins.binsAbove} (based on volatility)`,
-        `  vol_adjusted_deploy: ${computeDeployAmount(preBalance.sol, pool.volatility).toFixed(3)} SOL (volatility-scaled)`,
-        `  smart_wallets: ${(swVal as any)?.in_pool?.length ?? 0} present`,
-        lpersPatterns ? `  top_lpers: ${lpersPatterns.top_lper_count} found, avg_win_rate=${lpersPatterns.avg_win_rate}%, avg_hold=${lpersPatterns.avg_hold_hours}h, best_roi=${lpersPatterns.best_roi}` : null,
-        nVal && (nVal as any).narrative ? `  narrative: ${(nVal as any).narrative.slice(0, 300)}` : `  narrative: none`,
-        (mem as any).value ? `  memory: ${(mem as any).value}` : null,
-      ].filter(Boolean).join("\n"));
+      candidateBlocks.push(
+        [
+          `POOL: ${pool.name} (${pool.pool})`,
+          `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}`,
+          `  momentum: trend=${pool.trend_label ?? "?"}, price_5m=${pool.price_change_5m ?? "?"}%, price_1h=${pool.price_change_1h ?? "?"}%, mtf_score=${pool.mtf_score ?? "?"}`,
+          `  suggested_bins: below=${suggestedBins.binsBelow}, above=${suggestedBins.binsAbove} (based on volatility)`,
+          `  vol_adjusted_deploy: ${computeDeployAmount(preBalance.sol, pool.volatility).toFixed(3)} SOL (volatility-scaled)`,
+          `  smart_wallets: ${(swVal as any)?.in_pool?.length ?? 0} present`,
+          lpersPatterns
+            ? `  top_lpers: ${lpersPatterns.top_lper_count} found, avg_win_rate=${lpersPatterns.avg_win_rate}%, avg_hold=${lpersPatterns.avg_hold_hours}h, best_roi=${lpersPatterns.best_roi}`
+            : null,
+          nVal && (nVal as any).narrative
+            ? `  narrative: ${(nVal as any).narrative.slice(0, 300)}`
+            : `  narrative: none`,
+          (mem as any).value ? `  memory: ${(mem as any).value}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
     }
 
     const { content } = await agentLoop(
       `SCREENING CYCLE\nMARKET: ${marketCtx}\n${strategyBlock}\nPositions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${preBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL\n\nIn BEARISH market, raise entry bar — only deploy on strongest candidates.\n\n${candidateBlocks.join("\n\n")}`,
-      config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048
+      config.llm.maxSteps,
+      [],
+      "SCREENER",
+      config.llm.screeningModel,
+      2048,
     );
     screenReport = content;
 
@@ -517,7 +670,10 @@ export async function runScreeningCycle({ silent = false } = {}) {
       log("screening_warn", "LLM tidak menghasilkan blok DECISION_JSON — skip");
       screenReport += `\n\n---\n⚠️ **HITL:** tidak ada blok DECISION_JSON di output — tidak ada rekomendasi.`;
     } else if (decision.action === "SKIP") {
-      log("screening", `Decision: SKIP — ${decision.reason ?? "no reason given"}`);
+      log(
+        "screening",
+        `Decision: SKIP — ${decision.reason ?? "no reason given"}`,
+      );
       screenReport += `\n\n---\n**Decision:** SKIP — ${decision.reason ?? "(tidak ada alasan)"}`;
     } else if (decision.action === "DEPLOY") {
       const validation = validateDecision(decision, candidates);
@@ -525,8 +681,13 @@ export async function runScreeningCycle({ silent = false } = {}) {
         log("screening_error", `Invalid DECISION_JSON: ${validation.reason}`);
         screenReport += `\n\n---\n❌ **HITL gagal:** ${validation.reason}`;
       } else {
-        const pool = candidates.find((c: any) => c.pool === decision.pool_address);
-        const suggestedBins = computeBinRange(pool?.volatility ?? 3, pool?.bin_step ?? 80);
+        const pool = candidates.find(
+          (c: any) => c.pool === decision.pool_address,
+        );
+        const suggestedBins = computeBinRange(
+          pool?.volatility ?? 3,
+          pool?.bin_step ?? 80,
+        );
         const solPriceMatch = marketCtx.match(/SOL:\s*\$(\d+\.?\d*)/);
         const solPrice = solPriceMatch ? parseFloat(solPriceMatch[1]) : 0;
         const binsBelow = decision.bins_below ?? suggestedBins.binsBelow;
@@ -534,7 +695,10 @@ export async function runScreeningCycle({ silent = false } = {}) {
         const strategy = decision.strategy ?? "bid_ask";
 
         // Recalculate deploy amount with volatility scaling
-        const volAdjustedAmount = computeDeployAmount(preBalance.sol, pool?.volatility);
+        const volAdjustedAmount = computeDeployAmount(
+          preBalance.sol,
+          pool?.volatility,
+        );
         const deployArgs = {
           pool_address: decision.pool_address,
           pool_name: decision.pool_name ?? pool?.name,
@@ -550,56 +714,78 @@ export async function runScreeningCycle({ silent = false } = {}) {
         };
 
         // Dedup: skip if already a pending DEPLOY for this pool
-        if (decision.pool_address && await hasPendingForPool(decision.pool_address)) {
-          log("screening", `Skipping duplicate pending DEPLOY for ${decision.pool_name ?? pool?.name}`);
+        if (
+          decision.pool_address &&
+          (await hasPendingForPool(decision.pool_address))
+        ) {
+          log(
+            "screening",
+            `Skipping duplicate pending DEPLOY for ${decision.pool_name ?? pool?.name}`,
+          );
           screenReport += `\n\n---\nℹ️ DEPLOY ${decision.pool_name ?? pool?.name} sudah ada pending sebelumnya — skip duplikat`;
         } else {
+          const pending = await createPendingDecision({
+            action: "deploy",
+            pool_address: decision.pool_address,
+            pool_name: decision.pool_name ?? pool?.name,
+            args: deployArgs,
+            reason: decision.reason,
+            risks: decision.risks ?? [],
+          });
 
-        const pending = await createPendingDecision({
-          action: "deploy",
-          pool_address: decision.pool_address,
-          pool_name: decision.pool_name ?? pool?.name,
-          args: deployArgs,
-          reason: decision.reason,
-          risks: decision.risks ?? [],
-        });
-
-        if (!pending) {
-          log("screening_error", "Gagal membuat pending_decision di database");
-          screenReport += `\n\n---\n❌ **HITL:** gagal simpan pending decision ke database`;
-        } else {
-          log("screening", `Pending #${pending.id}: ${decision.pool_name ?? pool?.name}`);
-
-          // Extract market regime from context string for auto-deploy gate
-          const regimeMatch = marketCtx.match(/Market:\s*(\w+)/);
-          const marketRegime = regimeMatch?.[1] ?? "NEUTRAL";
-
-          // Try auto-approve if autoDeploy is enabled
-          const autoResult = await tryAutoApprove(pending.id, marketRegime);
-
-          if (autoResult.autoApproved) {
-            log("auto_deploy", `#${pending.id} auto-approved: ${autoResult.reasoning}`);
-            screenReport += `\n\n---\n🤖 **Auto-Deploy** — #${pending.id}\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Alasan agent: ${decision.reason ?? "(tidak ada)"}\n- **Reasoning auto-approve:** ${autoResult.reasoning}`;
+          if (!pending) {
+            log(
+              "screening_error",
+              "Gagal membuat pending_decision di database",
+            );
+            screenReport += `\n\n---\n❌ **HITL:** gagal simpan pending decision ke database`;
           } else {
-            // Fall back to manual HITL — notify user
-            log("screening", `#${pending.id} menunggu konfirmasi manual: ${autoResult.reasoning}`);
-            notifyPendingDecision({
-              id: pending.id,
-              action: "deploy",
-              poolName: decision.pool_name ?? pool?.name,
-              poolAddress: decision.pool_address,
-              amountSol: deployAmount,
-              strategy,
-              binsBelow,
-              binsAbove,
-              reason: decision.reason,
-              risks: decision.risks ?? [],
-              expiresInMin: 30,
-            }).catch((e: any) => log("telegram_error", `notifyPendingDecision failed: ${e.message}`));
+            log(
+              "screening",
+              `Pending #${pending.id}: ${decision.pool_name ?? pool?.name}`,
+            );
 
-            screenReport += `\n\n---\n🔔 **Pending Approval** — #${pending.id}\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Alasan agent: ${decision.reason ?? "(tidak ada)"}\n- **Kenapa butuh manual:** ${autoResult.reasoning}\n\nKonfirmasi via dashboard atau Telegram: \`/approve ${pending.id}\` / \`/reject ${pending.id}\``;
+            // Extract market regime from context string for auto-deploy gate
+            const regimeMatch = marketCtx.match(/Market:\s*(\w+)/);
+            const marketRegime = regimeMatch?.[1] ?? "NEUTRAL";
+
+            // Try auto-approve if autoDeploy is enabled
+            const autoResult = await tryAutoApprove(pending.id, marketRegime);
+
+            if (autoResult.autoApproved) {
+              log(
+                "auto_deploy",
+                `#${pending.id} auto-approved: ${autoResult.reasoning}`,
+              );
+              screenReport += `\n\n---\n🤖 **Auto-Deploy** — #${pending.id}\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Alasan agent: ${decision.reason ?? "(tidak ada)"}\n- **Reasoning auto-approve:** ${autoResult.reasoning}`;
+            } else {
+              // Fall back to manual HITL — notify user
+              log(
+                "screening",
+                `#${pending.id} menunggu konfirmasi manual: ${autoResult.reasoning}`,
+              );
+              notifyPendingDecision({
+                id: pending.id,
+                action: "deploy",
+                poolName: decision.pool_name ?? pool?.name,
+                poolAddress: decision.pool_address,
+                amountSol: deployAmount,
+                strategy,
+                binsBelow,
+                binsAbove,
+                reason: decision.reason,
+                risks: decision.risks ?? [],
+                expiresInMin: 30,
+              }).catch((e: any) =>
+                log(
+                  "telegram_error",
+                  `notifyPendingDecision failed: ${e.message}`,
+                ),
+              );
+
+              screenReport += `\n\n---\n🔔 **Pending Approval** — #${pending.id}\n- Pool: ${decision.pool_name ?? pool?.name}\n- Amount: ${deployAmount} SOL\n- Strategy: ${strategy}\n- Alasan agent: ${decision.reason ?? "(tidak ada)"}\n- **Kenapa butuh manual:** ${autoResult.reasoning}\n\nKonfirmasi via dashboard atau Telegram: \`/approve ${pending.id}\` / \`/reject ${pending.id}\``;
+            }
           }
-        }
         } // end else (dedup check)
       }
     }
@@ -608,7 +794,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
     screenReport = `Screening cycle failed: ${error.message}`;
   } finally {
     _screeningBusy = false;
-    if (!silent && (await telegramEnabled()) && screenReport) sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
+    if (!silent && (await telegramEnabled()) && screenReport)
+      sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
   }
   return screenReport;
 }
@@ -654,8 +841,11 @@ export function startCronJobs() {
   const mgmtTask = cron.schedule(`*/${mgmtInterval} * * * *`, async () => {
     if (_managementBusy) return;
     _managementBusy = true;
-    try { await trackRun("management", () => runManagementCycle()); }
-    finally { _managementBusy = false; }
+    try {
+      await trackRun("management", () => runManagementCycle());
+    } finally {
+      _managementBusy = false;
+    }
   });
 
   const screenTask = cron.schedule(`*/${screenInterval} * * * *`, () => {
@@ -667,16 +857,44 @@ export function startCronJobs() {
     _managementBusy = true;
     try {
       await trackRun("health_check", () =>
-        agentLoop("HEALTH CHECK — summarize portfolio health.", config.llm.maxSteps, [], "MANAGER")
+        agentLoop(
+          "HEALTH CHECK — summarize portfolio health.",
+          config.llm.maxSteps,
+          [],
+          "MANAGER",
+        ),
       );
-    } finally { _managementBusy = false; }
+    } finally {
+      _managementBusy = false;
+    }
   });
 
-  const briefingTask = cron.schedule(`0 1 * * *`, () => { trackRun("morning_briefing", () => runBriefing()); }, { timezone: "UTC" });
-  const briefingWatchdog = cron.schedule(`0 */6 * * *`, () => { trackRun("briefing_watchdog", () => maybeRunMissedBriefing()); }, { timezone: "UTC" });
+  const briefingTask = cron.schedule(
+    `0 1 * * *`,
+    () => {
+      trackRun("morning_briefing", () => runBriefing());
+    },
+    { timezone: "UTC" },
+  );
+  const briefingWatchdog = cron.schedule(
+    `0 */6 * * *`,
+    () => {
+      trackRun("briefing_watchdog", () => maybeRunMissedBriefing());
+    },
+    { timezone: "UTC" },
+  );
 
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
-  log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
+  _cronTasks = [
+    mgmtTask,
+    screenTask,
+    healthTask,
+    briefingTask,
+    briefingWatchdog,
+  ];
+  log(
+    "cron",
+    `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`,
+  );
 }
 
 export function stopCronJobs() {
