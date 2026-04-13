@@ -14,7 +14,13 @@ import { sendHTML } from "./telegram";
 import { config, computeDeployAmount, computeBinRange } from "./config";
 import { getWalletBalances } from "./tools/wallet";
 
-export type PendingStatus = "pending" | "approved" | "executed" | "rejected" | "failed" | "expired";
+export type PendingStatus =
+  | "pending"
+  | "approved"
+  | "executed"
+  | "rejected"
+  | "failed"
+  | "expired";
 
 export interface PendingDecision {
   id: number;
@@ -65,7 +71,10 @@ export async function createPendingDecision(input: {
   return data as PendingDecision;
 }
 
-export async function listPendingDecisions(status: PendingStatus | null = "pending", limit = 20) {
+export async function listPendingDecisions(
+  status: PendingStatus | null = "pending",
+  limit = 20,
+) {
   let query = supabase
     .from("pending_decisions")
     .select("*")
@@ -81,7 +90,9 @@ export async function listPendingDecisions(status: PendingStatus | null = "pendi
   return (data ?? []) as PendingDecision[];
 }
 
-export async function getPendingDecision(id: number): Promise<PendingDecision | null> {
+export async function getPendingDecision(
+  id: number,
+): Promise<PendingDecision | null> {
   const { data, error } = await supabase
     .from("pending_decisions")
     .select("*")
@@ -95,7 +106,11 @@ export async function getPendingDecision(id: number): Promise<PendingDecision | 
  * Atomically claim a pending decision. Returns the updated row if this
  * caller won the race, or null if the row is not pending anymore.
  */
-async function claimPending(id: number, newStatus: "approved" | "rejected", resolvedBy: string): Promise<PendingDecision | null> {
+async function claimPending(
+  id: number,
+  newStatus: "approved" | "rejected",
+  resolvedBy: string,
+): Promise<PendingDecision | null> {
   const { data, error } = await supabase
     .from("pending_decisions")
     .update({
@@ -128,7 +143,11 @@ export interface ApprovalResult {
  * @param reasoning — WHY the approver chose to approve. For auto-approve,
  *   this is the system-generated justification from safety checks.
  */
-export async function approvePendingDecision(id: number, resolvedBy: "web" | "telegram" | "auto", reasoning?: string): Promise<ApprovalResult> {
+export async function approvePendingDecision(
+  id: number,
+  resolvedBy: "web" | "telegram" | "auto",
+  reasoning?: string,
+): Promise<ApprovalResult> {
   const claimed = await claimPending(id, "approved", resolvedBy);
   if (!claimed) {
     const current = await getPendingDecision(id);
@@ -143,14 +162,22 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
 
   // Persist reasoning alongside the decision row
   if (reasoning) {
-    await supabase.from("pending_decisions")
+    await supabase
+      .from("pending_decisions")
       .update({ error: `Approved: ${reasoning}` })
       .eq("id", id)
-      .then(() => {}, () => {});
+      .then(
+        () => {},
+        () => {},
+      );
   }
 
   // Announce approval to Telegram (dual-channel visibility)
-  const sourceLabels: Record<string, string> = { web: "web UI", telegram: "Telegram", auto: "Auto-Deploy" };
+  const sourceLabels: Record<string, string> = {
+    web: "web UI",
+    telegram: "Telegram",
+    auto: "Auto-Deploy",
+  };
   const sourceLabel = sourceLabels[resolvedBy] ?? resolvedBy;
   const reasonLine = reasoning ? `\nAlasan: ${reasoning}` : "";
   await sendHTML(
@@ -158,7 +185,8 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
   ).catch(() => {});
 
   // Execute the underlying tool
-  const toolName = claimed.action === "deploy" ? "deploy_position" : "close_position";
+  const toolName =
+    claimed.action === "deploy" ? "deploy_position" : "close_position";
   let execution: any;
   try {
     if (claimed.args?.rebalance && claimed.args?.pool_address) {
@@ -179,7 +207,10 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
       });
 
       if (!rebalanceSafety.pass) {
-        execution = { blocked: true, reason: `Rebalance dibatalkan sebelum close: ${rebalanceSafety.reason}` };
+        execution = {
+          blocked: true,
+          reason: `Rebalance dibatalkan sebelum close: ${rebalanceSafety.reason}`,
+        };
         throw new Error(rebalanceSafety.reason ?? "rebalance preflight failed");
       }
     }
@@ -190,7 +221,12 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
   }
 
   // If this is a rebalance (close + redeploy), trigger redeploy after successful close
-  if (!execution?.error && !execution?.blocked && claimed.args?.rebalance && claimed.args?.pool_address) {
+  if (
+    !execution?.error &&
+    !execution?.blocked &&
+    claimed.args?.rebalance &&
+    claimed.args?.pool_address
+  ) {
     try {
       const vol = claimed.args.volatility ?? 3;
       const binStep = claimed.args.bin_step ?? 80;
@@ -210,9 +246,15 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
       });
 
       if (redeployResult?.error || redeployResult?.blocked) {
-        log("rebalance", `Redeploy after rebalance failed: ${redeployResult?.error ?? redeployResult?.reason}`);
+        log(
+          "rebalance",
+          `Redeploy after rebalance failed: ${redeployResult?.error ?? redeployResult?.reason}`,
+        );
       } else {
-        log("rebalance", `Redeploy success for ${claimed.pool_name} — new position at current active bin`);
+        log(
+          "rebalance",
+          `Redeploy success for ${claimed.pool_name} — new position at current active bin`,
+        );
         execution.rebalance_deploy = redeployResult;
       }
     } catch (e: any) {
@@ -222,7 +264,9 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
 
   const failed = execution?.error || execution?.blocked;
   const finalStatus: PendingStatus = failed ? "failed" : "executed";
-  const errorMsg = execution?.error || (execution?.blocked ? `blocked: ${execution.reason}` : null);
+  const errorMsg =
+    execution?.error ||
+    (execution?.blocked ? `blocked: ${execution.reason}` : null);
 
   const { data: updated } = await supabase
     .from("pending_decisions")
@@ -258,7 +302,11 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
   };
 }
 
-export async function rejectPendingDecision(id: number, resolvedBy: "web" | "telegram", reason?: string): Promise<ApprovalResult> {
+export async function rejectPendingDecision(
+  id: number,
+  resolvedBy: "web" | "telegram",
+  reason?: string,
+): Promise<ApprovalResult> {
   const claimed = await claimPending(id, "rejected", resolvedBy);
   if (!claimed) {
     const current = await getPendingDecision(id);
@@ -281,7 +329,11 @@ export async function rejectPendingDecision(id: number, resolvedBy: "web" | "tel
     if (updated) Object.assign(claimed, updated);
   }
 
-  const sourceLabels: Record<string, string> = { web: "web UI", telegram: "Telegram", auto: "Auto-Safety" };
+  const sourceLabels: Record<string, string> = {
+    web: "web UI",
+    telegram: "Telegram",
+    auto: "Auto-Safety",
+  };
   const sourceLabel = sourceLabels[resolvedBy] ?? resolvedBy;
   await sendHTML(
     `🔴 <b>Rejected via ${sourceLabel}</b> — <code>#${claimed.id}</code>\n${claimed.action}: ${claimed.pool_name ?? claimed.pool_address?.slice(0, 8) ?? "?"}${reason ? `\nAlasan: ${reason}` : ""}`,
@@ -310,13 +362,15 @@ async function checkAutoDeployRateLimit(): Promise<AutoDeployCheck> {
   dayStart.setUTCHours(0, 0, 0, 0);
 
   const [hourResult, dayResult] = await Promise.all([
-    supabase.from("pending_decisions")
+    supabase
+      .from("pending_decisions")
       .select("id", { count: "exact" })
       .eq("resolved_by", "auto")
       .eq("action", "deploy")
       .in("status", ["approved", "executed"])
       .gte("resolved_at", oneHourAgo),
-    supabase.from("pending_decisions")
+    supabase
+      .from("pending_decisions")
       .select("id", { count: "exact" })
       .eq("resolved_by", "auto")
       .eq("action", "deploy")
@@ -328,10 +382,16 @@ async function checkAutoDeployRateLimit(): Promise<AutoDeployCheck> {
   const dayCount = dayResult.count ?? 0;
 
   if (hourCount >= maxHour) {
-    return { allowed: false, reasoning: `Rate limit per jam tercapai (${hourCount}/${maxHour})` };
+    return {
+      allowed: false,
+      reasoning: `Rate limit per jam tercapai (${hourCount}/${maxHour})`,
+    };
   }
   if (dayCount >= maxDay) {
-    return { allowed: false, reasoning: `Rate limit per hari tercapai (${dayCount}/${maxDay})` };
+    return {
+      allowed: false,
+      reasoning: `Rate limit per hari tercapai (${dayCount}/${maxDay})`,
+    };
   }
 
   return {
@@ -347,23 +407,36 @@ async function checkAutoDeployRateLimit(): Promise<AutoDeployCheck> {
  *
  * Called from runScreeningCycle after creating a pending_decision row.
  */
-export async function tryAutoApprove(id: number, marketRegime: string): Promise<{
+export async function tryAutoApprove(
+  id: number,
+  marketRegime: string,
+): Promise<{
   autoApproved: boolean;
   reasoning: string;
 }> {
   if (!config.safety.autoDeploy) {
-    return { autoApproved: false, reasoning: "Auto-deploy dimatikan — menunggu konfirmasi manual" };
+    return {
+      autoApproved: false,
+      reasoning: "Auto-deploy dimatikan — menunggu konfirmasi manual",
+    };
   }
 
   // Gate: bearish market
   if (config.safety.autoDeployRequireNoBearish && marketRegime === "BEARISH") {
-    return { autoApproved: false, reasoning: "Market BEARISH + autoDeployRequireNoBearish=true — butuh konfirmasi manual" };
+    return {
+      autoApproved: false,
+      reasoning:
+        "Market BEARISH + autoDeployRequireNoBearish=true — butuh konfirmasi manual",
+    };
   }
 
   // Gate: rate limit
   const rateCheck = await checkAutoDeployRateLimit();
   if (!rateCheck.allowed) {
-    return { autoApproved: false, reasoning: rateCheck.reasoning + " — butuh konfirmasi manual" };
+    return {
+      autoApproved: false,
+      reasoning: rateCheck.reasoning + " — butuh konfirmasi manual",
+    };
   }
 
   // All gates passed — auto-approve with reasoning
@@ -373,7 +446,10 @@ export async function tryAutoApprove(id: number, marketRegime: string): Promise<
   const result = await approvePendingDecision(id, "auto", reasoning);
 
   if (!result.success) {
-    return { autoApproved: false, reasoning: `Auto-approve gagal: ${result.error}` };
+    return {
+      autoApproved: false,
+      reasoning: `Auto-approve gagal: ${result.error}`,
+    };
   }
 
   return { autoApproved: true, reasoning };
@@ -384,7 +460,9 @@ export async function tryAutoApprove(id: number, marketRegime: string): Promise<
  * position_address or pool_address. Prevents duplicate pending rows
  * when cron cycles run repeatedly for the same asset.
  */
-export async function hasPendingForPosition(positionAddress: string): Promise<boolean> {
+export async function hasPendingForPosition(
+  positionAddress: string,
+): Promise<boolean> {
   const { count } = await supabase
     .from("pending_decisions")
     .select("id", { count: "exact", head: true })

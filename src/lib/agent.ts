@@ -210,9 +210,14 @@ export async function agentLoop(
         try {
           const parsed = JSON.parse(failedDeploy.content);
           failureReason = parsed?.error || parsed?.reason || failureReason;
-        } catch { /* keep default */ }
+        } catch {
+          /* keep default */
+        }
 
-        log("agent", `Stopping follow-up actions after failed deploy: ${failureReason}`);
+        log(
+          "agent",
+          `Stopping follow-up actions after failed deploy: ${failureReason}`,
+        );
         return {
           content: `Deploy gagal: ${failureReason}. Tidak ada aksi lanjutan dijalankan.`,
           userMessage: goal,
