@@ -3,16 +3,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
-  { href: "/",              label: "Dashboard" },
-  { href: "/positions",     label: "Positions" },
-  { href: "/lessons",       label: "Lessons" },
-  { href: "/signal-weights",label: "Signals" },
-  { href: "/decisions",     label: "Decisions" },
-  { href: "/goals",         label: "Goals" },
-  { href: "/scheduler",     label: "Scheduler" },
-  { href: "/config",        label: "Config" },
-  { href: "/secrets",       label: "API Keys" },
-  { href: "/chat",          label: "Chat" },
+  { href: "/", label: "Dashboard" },
+  { href: "/positions", label: "Positions" },
+  { href: "/lessons", label: "Lessons" },
+  { href: "/signal-weights", label: "Signals" },
+  { href: "/decisions", label: "Decisions" },
+  { href: "/goals", label: "Goals" },
+  { href: "/scheduler", label: "Scheduler" },
+  { href: "/config", label: "Config" },
+  { href: "/secrets", label: "API Keys" },
+  { href: "/chat", label: "Chat" },
 ];
 
 interface PendingItem {
@@ -39,18 +39,25 @@ export default function NavBar() {
   const [notifOpen, setNotifOpen] = useState(false);
   const pathname = usePathname();
   const [pending, setPending] = useState<PendingItem[]>([]);
-  const notifRef = useRef<HTMLDivElement>(null);
+  const desktopNotifRef = useRef<HTMLDivElement>(null);
+  const mobileNotifRef = useRef<HTMLDivElement>(null);
 
   const loadPending = useCallback(async () => {
     try {
-      const res = await fetch("/api/pending-decisions?status=pending", { cache: "no-store" });
+      const res = await fetch("/api/pending-decisions?status=pending", {
+        cache: "no-store",
+      });
       if (!res.ok) return;
       const data = await res.json();
       const now = Date.now();
       setPending(
-        (data.decisions ?? []).filter((d: any) => new Date(d.expires_at).getTime() > now)
+        (data.decisions ?? []).filter(
+          (d: any) => new Date(d.expires_at).getTime() > now,
+        ),
       );
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }, []);
 
   useEffect(() => {
@@ -62,7 +69,11 @@ export default function NavBar() {
   // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const clickedInsideNotifications =
+        (desktopNotifRef.current && desktopNotifRef.current.contains(target)) ||
+        (mobileNotifRef.current && mobileNotifRef.current.contains(target));
+      if (!clickedInsideNotifications) {
         setNotifOpen(false);
       }
     };
@@ -71,12 +82,16 @@ export default function NavBar() {
   }, []);
 
   // Close notif when navigating
-  useEffect(() => { setNotifOpen(false); setMenuOpen(false); }, [pathname]);
+  useEffect(() => {
+    setNotifOpen(false);
+    setMenuOpen(false);
+  }, [pathname]);
 
   const count = pending.length;
 
   const linkCls = (href: string) => {
-    const active = pathname === href || (href !== "/" && pathname.startsWith(href));
+    const active =
+      pathname === href || (href !== "/" && pathname.startsWith(href));
     return active
       ? "text-(--accent) font-medium"
       : "text-(--muted) hover:text-(--text)";
@@ -84,13 +99,25 @@ export default function NavBar() {
 
   const bellButton = (
     <button
+      type="button"
       onClick={() => setNotifOpen((v) => !v)}
       className={`relative p-1.5 rounded-lg transition-colors ${
-        notifOpen ? "text-(--accent) bg-(--accent)/10" : "text-(--muted) hover:text-(--text) hover:bg-white/5"
+        notifOpen
+          ? "text-(--accent) bg-(--accent)/10"
+          : "text-(--muted) hover:text-(--text) hover:bg-white/5"
       }`}
       aria-label="Notifications"
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
         <path d="M13.73 21a2 2 0 01-3.46 0" />
       </svg>
@@ -103,11 +130,14 @@ export default function NavBar() {
   );
 
   const notifDropdown = notifOpen && (
-    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 max-h-[70vh] overflow-y-auto bg-(--bg) border border-(--border) rounded-xl shadow-2xl z-50">
+    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 max-w-[calc(100vw-1rem)] max-h-[70vh] overflow-y-auto bg-(--bg) border border-(--border) rounded-xl shadow-2xl z-10">
       {/* Dropdown header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-(--border)">
         <span className="text-sm font-semibold">Notifikasi</span>
-        <a href="/pending" className="text-[10px] text-(--accent) hover:underline">
+        <a
+          href="/pending"
+          className="text-[10px] text-(--accent) hover:underline"
+        >
           Lihat semua →
         </a>
       </div>
@@ -126,9 +156,11 @@ export default function NavBar() {
               className="flex items-start gap-3 px-4 py-3 hover:bg-white/5 transition-colors"
             >
               {/* Dot */}
-              <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                d.action === "deploy" ? "bg-green-400" : "bg-red-400"
-              }`} />
+              <span
+                className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                  d.action === "deploy" ? "bg-green-400" : "bg-red-400"
+                }`}
+              />
               {/* Content */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
@@ -140,7 +172,9 @@ export default function NavBar() {
                   </span>
                 </div>
                 {d.reason && (
-                  <div className="text-xs text-(--muted) mt-0.5 line-clamp-2">{d.reason}</div>
+                  <div className="text-xs text-(--muted) mt-0.5 line-clamp-2">
+                    {d.reason}
+                  </div>
                 )}
               </div>
               {/* Time */}
@@ -164,15 +198,22 @@ export default function NavBar() {
 
         {/* Desktop links + bell */}
         <div className="hidden md:flex items-center gap-5">
-          <div className="flex items-center gap-5 min-w-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+          <div
+            className="relative z-20 flex items-center gap-5 min-w-0 overflow-x-auto"
+            style={{ scrollbarWidth: "none" }}
+          >
             {LINKS.map((l) => (
-              <a key={l.href} href={l.href} className={`text-sm whitespace-nowrap transition-colors ${linkCls(l.href)}`}>
+              <a
+                key={l.href}
+                href={l.href}
+                className={`text-sm whitespace-nowrap transition-colors ${linkCls(l.href)}`}
+              >
                 {l.label}
               </a>
             ))}
           </div>
           {/* Notification bell — outside overflow container so dropdown isn't clipped */}
-          <div className="relative shrink-0" ref={notifRef}>
+          <div className="relative shrink-0 z-20" ref={desktopNotifRef}>
             {bellButton}
             {notifDropdown}
           </div>
@@ -180,22 +221,40 @@ export default function NavBar() {
 
         {/* Mobile: bell + hamburger */}
         <div className="flex items-center gap-1 md:hidden">
-          <div className="relative" ref={notifRef}>
+          <div className="relative z-20" ref={mobileNotifRef}>
             {bellButton}
             {notifDropdown}
           </div>
           <button
+            type="button"
             className="p-2 -mr-2 text-(--muted) hover:text-(--text) transition-colors"
             onClick={() => setMenuOpen((o) => !o)}
             aria-label="Toggle menu"
           >
             {menuOpen ? (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
               </svg>
             )}
           </button>
@@ -211,7 +270,8 @@ export default function NavBar() {
               href={l.href}
               onClick={() => setMenuOpen(false)}
               className={`py-2.5 px-3 rounded-lg text-sm transition-colors ${
-                pathname === l.href || (l.href !== "/" && pathname.startsWith(l.href))
+                pathname === l.href ||
+                (l.href !== "/" && pathname.startsWith(l.href))
                   ? "bg-(--accent)/10 text-(--accent) font-medium"
                   : "text-(--muted) hover:text-(--text) hover:bg-white/5"
               }`}
