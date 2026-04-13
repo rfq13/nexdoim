@@ -7,7 +7,7 @@ import { log } from "./logger";
 import { config } from "./config";
 import { getStateSummary } from "./state";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons";
-import { createOllamaClient, getDefaultModel, getFallbackModel } from "./llm";
+import { createLLMClient, getDefaultModel, getFallbackModel } from "./llm";
 import { getWeightsSummary } from "./signal-weights";
 import { getDecisionSummary } from "./decision-log";
 
@@ -71,7 +71,7 @@ function getToolsForRole(agentType: string) {
   return [...tools];
 }
 
-const clientPromise = createOllamaClient();
+const clientPromise = createLLMClient();
 const DEFAULT_MODELPromise = getDefaultModel();
 
 export async function agentLoop(
@@ -157,7 +157,7 @@ export async function agentLoop(
         }
       }
 
-      if (!response?.message) throw new Error("Ollama returned empty response");
+      if (!response?.message) throw new Error("LLM returned empty response");
       const msg = response.message;
       messages.push(msg);
 

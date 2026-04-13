@@ -95,6 +95,11 @@ export default function ConfigPage() {
   const [models, setModels] = useState<string[]>([]);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ screening: true });
 
+  const loadModels = () => {
+    fetch("/api/models").then((r) => r.json()).catch(() => ({ models: [] }))
+      .then((modelData) => setModels(Array.isArray(modelData?.models) ? modelData.models : []));
+  };
+
   useEffect(() => {
     Promise.all([
       fetch("/api/config").then((r) => r.json()),
@@ -126,6 +131,7 @@ export default function ConfigPage() {
       if (!res.ok || result.success === false)
         throw new Error(result.error || "Gagal menyimpan");
       setConfig((prev: any) => ({ ...prev, [section]: drafts[section] }));
+      if (section === "llm") loadModels();
       setStatus((s) => ({ ...s, [section]: "Tersimpan ✓" }));
       setTimeout(() => setStatus((s) => ({ ...s, [section]: "" })), 2500);
     } catch (e: any) {
@@ -156,7 +162,7 @@ export default function ConfigPage() {
 
       {/* LLM Models — special section */}
       <SectionCard
-        title="Model LLM (Ollama / OpenRouter)"
+        title="Model LLM"
         open={!!openSections["llm"]}
         onToggle={() => setOpenSections((s) => ({ ...s, llm: !s["llm"] }))}
         dirty={isDirty("llm")}
@@ -165,6 +171,26 @@ export default function ConfigPage() {
         onSave={() => saveSection("llm")}
         onReset={() => resetSection("llm")}
       >
+        {/* Provider toggle */}
+        <div className="mb-5">
+          <span className="text-sm text-(--muted) block mb-2">Provider</span>
+          <div className="flex gap-1 bg-(--bg) border border-(--border) rounded-lg p-1 w-fit">
+            {(["ollama", "openrouter"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setField("llm", "provider", p)}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  drafts.llm?.provider === p
+                    ? "bg-(--accent) text-white"
+                    : "text-(--muted) hover:text-(--text)"
+                }`}
+              >
+                {p === "ollama" ? "Ollama" : "OpenRouter"}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Model selectors */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {(["generalModel", "managementModel", "screeningModel"] as const).map((key) => {
             const labelMap = { generalModel: "General Agent", managementModel: "Manager Agent", screeningModel: "Screener Agent" };
@@ -173,14 +199,26 @@ export default function ConfigPage() {
             return (
               <label key={key} className="flex flex-col gap-1 text-sm">
                 <span className="text-(--muted)">{labelMap[key]}</span>
-                <select
+                {/* Combo: dropdown + manual input */}
+                <div className="flex gap-1">
+                  <select
+                    value={opts.includes(val) ? val : "__custom__"}
+                    onChange={(e) => {
+                      if (e.target.value !== "__custom__") setField("llm", key, e.target.value);
+                    }}
+                    className="bg-(--bg) border border-(--border) rounded-lg px-3 py-2 focus:border-(--accent) outline-none flex-1 min-w-0"
+                  >
+                    {opts.map((m) => <option key={m} value={m}>{m}</option>)}
+                    {!opts.includes(val) && val && <option value="__custom__">{val} (custom)</option>}
+                  </select>
+                </div>
+                <input
+                  type="text"
                   value={val}
                   onChange={(e) => setField("llm", key, e.target.value)}
-                  className="bg-(--bg) border border-(--border) rounded-lg px-3 py-2 focus:border-(--accent) outline-none"
-                >
-                  {opts.length === 0 && <option value={val || ""}>{val || "Tidak ada model"}</option>}
-                  {opts.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
+                  placeholder={drafts.llm?.provider === "openrouter" ? "e.g. google/gemini-2.5-flash" : "e.g. gpt-oss:120b"}
+                  className="bg-(--bg) border border-(--border) rounded-lg px-3 py-1.5 text-xs text-(--muted) focus:border-(--accent) focus:text-(--text) outline-none"
+                />
               </label>
             );
           })}

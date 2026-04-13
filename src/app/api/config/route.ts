@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { config, saveConfig } from "@/lib/config";
+import { resetLLMClient } from "@/lib/llm";
 
 export async function GET() {
   return NextResponse.json({
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
       (config as any)[section] = { ...(config as any)[section], ...data };
       // Persist to Supabase as nested section
       await saveConfig({ [section]: (config as any)[section] });
+      if (section === "llm" && data.provider) resetLLMClient();
       return NextResponse.json({ success: true, section, saved: (config as any)[section] });
     }
 

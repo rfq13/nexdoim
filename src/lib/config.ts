@@ -30,6 +30,7 @@ export interface MeridianConfig {
     healthCheckIntervalMin: number;
   };
   llm: {
+    provider: "ollama" | "openrouter";
     temperature: number;
     maxTokens: number;
     maxSteps: number;
@@ -124,6 +125,7 @@ const DEFAULT_CONFIG: MeridianConfig = {
     healthCheckIntervalMin: 60,
   },
   llm: {
+    provider: (process.env.LLM_PROVIDER as "ollama" | "openrouter") ?? "ollama",
     temperature: 0.373,
     maxTokens: 4096,
     maxSteps: 20,

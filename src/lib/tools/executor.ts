@@ -49,6 +49,7 @@ import { log, logAction } from "../logger";
 import { notifyDeploy, notifyClose, notifySwap } from "../telegram";
 import { appendDecision, getRecentDecisions } from "../decision-log";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist";
+import { resetLLMClient } from "../llm";
 import {
   listGoals,
   getGoal,
@@ -96,6 +97,7 @@ const CONFIG_MAP: Record<string, [string, string]> = {
   maxDeployAmount: ["risk", "maxDeployAmount"],
   managementIntervalMin: ["schedule", "managementIntervalMin"],
   screeningIntervalMin: ["schedule", "screeningIntervalMin"],
+  llmProvider: ["llm", "provider"],
   managementModel: ["llm", "managementModel"],
   screeningModel: ["llm", "screeningModel"],
   generalModel: ["llm", "generalModel"],
@@ -282,6 +284,7 @@ const toolMap: Record<string, (args: any) => any> = {
       applied.managementIntervalMin != null ||
       applied.screeningIntervalMin != null;
     if (intervalChanged && _cronRestarter) _cronRestarter();
+    if (applied.llmProvider != null) resetLLMClient();
 
     const lessonsKeys = Object.keys(applied).filter(
       (k) => k !== "managementIntervalMin" && k !== "screeningIntervalMin",
