@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { verifySessionToken } from "@/lib/auth";
+import { verifySessionToken } from "@/lib/auth-edge";
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const token = request.cookies.get("admin_token")?.value;
   const isLoginPage = request.nextUrl.pathname.startsWith("/login");
   const isAuthApi = request.nextUrl.pathname.startsWith("/api/auth");
@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!token || !verifySessionToken(token)) {
+  if (!token || !(await verifySessionToken(token))) {
     if (request.nextUrl.pathname.startsWith("/api")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
