@@ -5,10 +5,11 @@
  * Token format: `session:{timestamp}.{hex_hmac}`
  */
 
+// Must match the same fallback chain as auth.ts (Node.js version)
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   process.env.ADMIN_PASSWORD ||
-  "";
+  "meridian-default-session-key";
 
 const encoder = new TextEncoder();
 

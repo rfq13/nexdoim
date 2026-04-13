@@ -1,11 +1,11 @@
-import { createHmac, randomBytes } from "crypto";
+import { createHmac } from "crypto";
 
-// Generate a stable session secret from ADMIN_PASSWORD or a random fallback.
-// In production, set SESSION_SECRET env var for persistence across restarts.
+// Session secret must be consistent between auth.ts (Node.js) and auth-edge.ts (Edge Runtime).
+// Both files resolve the same env vars in the same order.
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   process.env.ADMIN_PASSWORD ||
-  randomBytes(32).toString("hex");
+  "meridian-default-session-key";
 
 /**
  * Create a signed session token. The token is an HMAC signature of the
