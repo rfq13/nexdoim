@@ -95,9 +95,25 @@ export default function ConfigPage() {
   const [models, setModels] = useState<string[]>([]);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ screening: true });
 
-  const loadModels = () => {
-    fetch("/api/models").then((r) => r.json()).catch(() => ({ models: [] }))
+  const loadModels = (provider?: string) => {
+    const qs = provider ? `?provider=${provider}` : "";
+    fetch(`/api/models${qs}`).then((r) => r.json()).catch(() => ({ models: [] }))
       .then((modelData) => setModels(Array.isArray(modelData?.models) ? modelData.models : []));
+  };
+
+  const switchProvider = (provider: "ollama" | "openrouter") => {
+    const defaultModel = provider === "openrouter" ? "google/gemini-2.5-flash" : "gpt-oss:120b";
+    setDrafts((prev) => ({
+      ...prev,
+      llm: {
+        ...prev.llm,
+        provider,
+        generalModel: defaultModel,
+        managementModel: defaultModel,
+        screeningModel: defaultModel,
+      },
+    }));
+    loadModels(provider);
   };
 
   useEffect(() => {
@@ -178,7 +194,7 @@ export default function ConfigPage() {
             {(["ollama", "openrouter"] as const).map((p) => (
               <button
                 key={p}
-                onClick={() => setField("llm", "provider", p)}
+                onClick={() => switchProvider(p)}
                 className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
                   drafts.llm?.provider === p
                     ? "bg-(--accent) text-white"

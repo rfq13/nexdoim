@@ -1,12 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
-import { getModelCatalog, getDefaultModel, getProvider } from "@/lib/llm";
+import { getModelCatalogForProvider, getDefaultModel, getProvider } from "@/lib/llm";
 
-export async function GET() {
-  const models = await getModelCatalog();
+export async function GET(req: NextRequest) {
+  const providerOverride = req.nextUrl.searchParams.get("provider") as "ollama" | "openrouter" | null;
+  const provider = providerOverride || getProvider();
+  const models = await getModelCatalogForProvider(provider);
   return NextResponse.json({
     models,
-    provider: getProvider(),
+    provider,
     defaultModel: getDefaultModel(),
     active: {
       generalModel: config.llm.generalModel,

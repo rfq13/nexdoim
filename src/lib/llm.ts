@@ -172,22 +172,39 @@ export async function getFallbackModel(): Promise<string> {
   );
 }
 
-export async function getModelCatalog(): Promise<string[]> {
+const OPENROUTER_MODELS = [
+  "google/gemini-2.5-flash",
+  "google/gemini-2.5-pro",
+  "anthropic/claude-sonnet-4",
+  "anthropic/claude-haiku-4",
+  "openai/gpt-4.1-mini",
+  "openai/gpt-4.1-nano",
+  "deepseek/deepseek-chat-v3",
+  "meta-llama/llama-4-maverick",
+  "qwen/qwen3-235b-a22b",
+  "google/gemma-4-31b-it:free",
+  "nousresearch/hermes-3-llama-3.1-405b:free",
+  "minimax/minimax-m2.5:free",
+  "qwen/qwen3-coder:free",
+  "qwen/qwen3-next-80b-a3b-instruct:free",
+];
+
+export async function getModelCatalogForProvider(
+  provider: "ollama" | "openrouter",
+): Promise<string[]> {
   const items = new Set<string>();
 
-  const fromEnv = (process.env.OLLAMA_MODEL_OPTIONS || "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-  for (const model of fromEnv) items.add(model);
+  if (provider === "ollama") {
+    const fromEnv = (process.env.OLLAMA_MODEL_OPTIONS || "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    for (const model of fromEnv) items.add(model);
 
-  items.add(await getDefaultModel());
-  items.add(await getFallbackModel());
-  items.add(config.llm.generalModel);
-  items.add(config.llm.managementModel);
-  items.add(config.llm.screeningModel);
+    items.add(config.llm.generalModel);
+    items.add(config.llm.managementModel);
+    items.add(config.llm.screeningModel);
 
-  if (getProvider() === "ollama") {
     try {
       const raw = await createOllamaRaw();
       const list = await raw.list();
@@ -198,27 +215,15 @@ export async function getModelCatalog(): Promise<string[]> {
     } catch {}
   }
 
-  if (getProvider() === "openrouter") {
-    const popular = [
-      "google/gemini-2.5-flash",
-      "google/gemini-2.5-pro",
-      "anthropic/claude-sonnet-4",
-      "anthropic/claude-haiku-4",
-      "openai/gpt-4.1-mini",
-      "openai/gpt-4.1-nano",
-      "deepseek/deepseek-chat-v3",
-      "meta-llama/llama-4-maverick",
-      "qwen/qwen3-235b-a22b",
-      "google/gemma-4-31b-it:free",
-      "nousresearch/hermes-3-llama-3.1-405b:free",
-      "minimax/minimax-m2.5:free",
-      "qwen/qwen3-coder:free",
-      "qwen/qwen3-next-80b-a3b-instruct:free",
-    ];
-    for (const m of popular) items.add(m);
+  if (provider === "openrouter") {
+    for (const m of OPENROUTER_MODELS) items.add(m);
   }
 
   return Array.from(items).sort((a, b) => a.localeCompare(b));
+}
+
+export async function getModelCatalog(): Promise<string[]> {
+  return getModelCatalogForProvider(getProvider());
 }
 
 // ─── Legacy exports (backward compat) ────────────────────────
