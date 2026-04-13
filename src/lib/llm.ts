@@ -45,7 +45,6 @@ async function createOllamaRaw(): Promise<Ollama> {
     DEFAULT_OLLAMA_HOST;
   const apiKey =
     (await getSecret("OLLAMA_API_KEY")) ||
-    (await getSecret("LLM_API_KEY")) ||
     (await getSecret("OPENROUTER_API_KEY"));
   return new Ollama({
     host,
@@ -76,7 +75,6 @@ function wrapOllama(ollama: Ollama): LLMClient {
 async function createOpenRouterRaw(): Promise<OpenAI> {
   const apiKey =
     (await getSecret("OPENROUTER_API_KEY")) ||
-    (await getSecret("LLM_API_KEY")) ||
     process.env.OPENROUTER_API_KEY ||
     "";
   const baseURL =

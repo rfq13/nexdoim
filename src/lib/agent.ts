@@ -71,9 +71,6 @@ function getToolsForRole(agentType: string) {
   return [...tools];
 }
 
-const clientPromise = createLLMClient();
-const DEFAULT_MODELPromise = getDefaultModel();
-
 export async function agentLoop(
   goal: string,
   maxSteps: number = config.llm.maxSteps,
@@ -82,8 +79,8 @@ export async function agentLoop(
   model: string | null = null,
   maxOutputTokens: number | null = null,
 ): Promise<{ content: string; userMessage: string }> {
-  const client = await clientPromise;
-  const DEFAULT_MODEL = await DEFAULT_MODELPromise;
+  const client = await createLLMClient();
+  const DEFAULT_MODEL = await getDefaultModel();
   const [portfolio, positions] = await Promise.all([
     getWalletBalances(),
     getMyPositions(),

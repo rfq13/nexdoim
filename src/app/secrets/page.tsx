@@ -14,27 +14,32 @@ const EXPECTED_KEYS = [
   "OLLAMA_MODEL",
   "OLLAMA_FALLBACK_MODEL",
   "OLLAMA_API_KEY",
-  "LLM_API_KEY",
   "OPENROUTER_API_KEY",
   "TELEGRAM_BOT_TOKEN",
   "RPC_URL",
   "WALLET_PRIVATE_KEY",
   "HELIUS_API_KEY",
-  "DRY_RUN"
+  "DRY_RUN",
 ];
 
 const KEY_INSTRUCTIONS: Record<string, string> = {
   OLLAMA_HOST: "URL API Ollama (contoh: http://localhost:11434).",
   OLLAMA_MODEL: "Nama model utama (contoh: llama3).",
   OLLAMA_FALLBACK_MODEL: "Nama model cadangan jika utama gagal.",
-  OLLAMA_API_KEY: "Dapatkan dari provider cloud Ollama Anda (kosongkan jika lokal).",
-  LLM_API_KEY: "Dapatkan dari layanan kustom jika tidak menggunakan standard (fallback dari OLLAMA_API_KEY).",
-  OPENROUTER_API_KEY: "Dapatkan OpenRouter API Key di https://openrouter.ai/keys",
-  TELEGRAM_BOT_TOKEN: "Buat bot baru dan dapatkan token via @BotFather di Telegram.",
-  RPC_URL: "URL RPC jaringan Solana (dapatkan dari Helius, QuickNode, Alchemy, dll).",
-  WALLET_PRIVATE_KEY: "Export private key dari wallet Solana Anda. JANGAN DIBAGIKAN KE SIAPAPUN.",
-  HELIUS_API_KEY: "Dapatkan API Key Helius di dashboard mereka (https://dev.helius.xyz/).",
-  DRY_RUN: "Isi dengan 'true' untuk mode simulasi tanpa melakukan aksi sungguhan."
+  OLLAMA_API_KEY:
+    "Dapatkan dari provider cloud Ollama Anda (kosongkan jika lokal).",
+  OPENROUTER_API_KEY:
+    "Dapatkan OpenRouter API Key di https://openrouter.ai/keys",
+  TELEGRAM_BOT_TOKEN:
+    "Buat bot baru dan dapatkan token via @BotFather di Telegram.",
+  RPC_URL:
+    "URL RPC jaringan Solana (dapatkan dari Helius, QuickNode, Alchemy, dll).",
+  WALLET_PRIVATE_KEY:
+    "Export private key dari wallet Solana Anda. JANGAN DIBAGIKAN KE SIAPAPUN.",
+  HELIUS_API_KEY:
+    "Dapatkan API Key Helius di dashboard mereka (https://dev.helius.xyz/).",
+  DRY_RUN:
+    "Isi dengan 'true' untuk mode simulasi tanpa melakukan aksi sungguhan.",
 };
 
 export default function SecretsPage() {
@@ -56,8 +61,10 @@ export default function SecretsPage() {
     try {
       const res = await fetch("/api/secrets");
       const data = await res.json();
-      const existing = Array.isArray(data) ? data : [];
-      
+      const existing = (Array.isArray(data) ? data : []).filter(
+        (s: Secret) => s.key !== "LLM_API_KEY",
+      );
+
       const merged = EXPECTED_KEYS.map((k) => {
         const found = existing.find((s: Secret) => s.key === k);
         return found || { id: k, key: k, value: "" };
@@ -65,7 +72,7 @@ export default function SecretsPage() {
       existing.forEach((s: Secret) => {
         if (!EXPECTED_KEYS.includes(s.key)) merged.push(s);
       });
-      
+
       setSecrets(merged);
     } catch (e) {
       console.error("Failed to fetch secrets", e);
@@ -75,11 +82,12 @@ export default function SecretsPage() {
   }
 
   async function saveSecret() {
-    if (!editingKey || !editValue) return;
+    if (!editingKey) return;
     setSavingKey(editingKey);
     try {
       await fetch("/api/secrets", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: editingKey, value: editValue }),
       });
       setEditingKey(null);
@@ -98,6 +106,7 @@ export default function SecretsPage() {
     try {
       await fetch("/api/secrets", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: newKey, value: newValue }),
       });
       setNewKey("");
@@ -165,7 +174,7 @@ export default function SecretsPage() {
                 <span className="font-mono font-bold text-sm text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
                   {s.key}
                   {KEY_INSTRUCTIONS[s.key] && (
-                    <span 
+                    <span
                       className="cursor-help inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300 text-[10px]"
                       title={KEY_INSTRUCTIONS[s.key]}
                     >
@@ -181,7 +190,9 @@ export default function SecretsPage() {
                     autoFocus
                   />
                 ) : (
-                  <span className={`font-mono text-sm ${s.value ? "text-gray-500" : "text-red-500 font-bold"}`}>
+                  <span
+                    className={`font-mono text-sm ${s.value ? "text-gray-500" : "text-red-500 font-bold"}`}
+                  >
                     {s.value ? s.value : "[NOT CONFIGURED]"}
                   </span>
                 )}
