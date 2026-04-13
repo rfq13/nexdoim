@@ -96,13 +96,15 @@ export async function agentLoop(
   let weightsSummary: string | null = null;
   let decisionSummary: string | null = null;
   let goalContext: string | null = null;
-  if (agentType === "SCREENER" || agentType === "MANAGER") {
+  {
     const { getGoalContextForPrompt } = await import("./goals");
     [weightsSummary, decisionSummary, goalContext] = await Promise.all([
       agentType === "SCREENER" && config.darwin?.enabled
         ? getWeightsSummary().catch(() => null)
         : Promise.resolve(null),
-      getDecisionSummary(6).catch(() => null),
+      agentType !== "GENERAL"
+        ? getDecisionSummary(6).catch(() => null)
+        : Promise.resolve(null),
       getGoalContextForPrompt().catch(() => null),
     ]);
   }

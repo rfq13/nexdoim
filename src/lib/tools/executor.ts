@@ -14,6 +14,7 @@ import { log, logAction } from "../logger";
 import { notifyDeploy, notifyClose, notifySwap } from "../telegram";
 import { appendDecision, getRecentDecisions } from "../decision-log";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist";
+import { listGoals, getGoal, createGoal, updateGoal, deleteGoal, syncGoalProgress, analyzeStrategy } from "../goals";
 
 let _cronRestarter: (() => void) | null = null;
 export function registerCronRestarter(fn: () => void) { _cronRestarter = fn; }
@@ -86,6 +87,31 @@ const toolMap: Record<string, (args: any) => any> = {
   unblock_deployer: unblockDev,
   list_blocked_deployers: listBlockedDevs,
   get_recent_decisions: async ({ limit }: any) => ({ decisions: await getRecentDecisions(limit ?? 6) }),
+  list_goals: async ({ status }: any) => {
+    const goals = await listGoals(status);
+    return { count: goals.length, goals: goals.map((g) => ({ id: g.id, title: g.title, target_pnl: g.target_pnl, current_pnl: g.current_pnl, status: g.status, start_date: g.start_date, end_date: g.end_date })) };
+  },
+  get_goal_progress: async ({ id }: any) => {
+    const goal = await getGoal(id);
+    if (!goal) return { error: `Goal ${id} not found` };
+    const progress = await syncGoalProgress(goal);
+    const strategy = analyzeStrategy(progress);
+    return { ...progress, proposed_adjustments: strategy };
+  },
+  create_goal: async ({ title, target_pnl, end_date, start_date, notes }: any) => {
+    const goal = await createGoal({ title, target_pnl, end_date, start_date, notes });
+    if (!goal) return { error: "Failed to create goal" };
+    return { created: true, id: goal.id, title: goal.title, target_pnl: goal.target_pnl, end_date: goal.end_date };
+  },
+  update_goal: async ({ id, ...updates }: any) => {
+    const goal = await updateGoal(id, updates);
+    if (!goal) return { error: `Goal ${id} not found or update failed` };
+    return { updated: true, id: goal.id, title: goal.title, status: goal.status };
+  },
+  delete_goal: async ({ id }: any) => {
+    const ok = await deleteGoal(id);
+    return ok ? { deleted: true, id } : { error: `Goal ${id} not found` };
+  },
   add_lesson: async ({ rule, tags, pinned, role }: any) => {
     await addLesson(rule, tags || [], { pinned: !!pinned, role: role || null });
     return { saved: true, rule, pinned: !!pinned, role: role || "all" };
