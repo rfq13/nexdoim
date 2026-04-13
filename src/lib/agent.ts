@@ -192,7 +192,32 @@ export async function agentLoop(
           };
         }),
       );
+
       messages.push(...toolResults);
+
+      const failedDeploy = toolResults.find((toolResult: any) => {
+        if (toolResult?.tool_name !== "deploy_position") return false;
+        try {
+          const parsed = JSON.parse(toolResult.content);
+          return !!(parsed?.error || parsed?.blocked);
+        } catch {
+          return false;
+        }
+      });
+
+      if (failedDeploy) {
+        let failureReason = "deploy gagal";
+        try {
+          const parsed = JSON.parse(failedDeploy.content);
+          failureReason = parsed?.error || parsed?.reason || failureReason;
+        } catch { /* keep default */ }
+
+        log("agent", `Stopping follow-up actions after failed deploy: ${failureReason}`);
+        return {
+          content: `Deploy gagal: ${failureReason}. Tidak ada aksi lanjutan dijalankan.`,
+          userMessage: goal,
+        };
+      }
     } catch (error: any) {
       log("error", `Agent loop error at step ${step}: ${error.message}`);
       if (error.status === 429) {

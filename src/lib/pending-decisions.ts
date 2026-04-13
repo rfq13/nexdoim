@@ -9,9 +9,10 @@
  */
 import { supabase } from "./db";
 import { log } from "./logger";
-import { executeTool } from "./tools/executor";
+import { executeTool, runSafetyChecks } from "./tools/executor";
 import { sendHTML } from "./telegram";
-import { config } from "./config";
+import { config, computeDeployAmount, computeBinRange } from "./config";
+import { getWalletBalances } from "./tools/wallet";
 
 export type PendingStatus = "pending" | "approved" | "executed" | "rejected" | "failed" | "expired";
 
@@ -160,6 +161,29 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
   const toolName = claimed.action === "deploy" ? "deploy_position" : "close_position";
   let execution: any;
   try {
+    if (claimed.args?.rebalance && claimed.args?.pool_address) {
+      const vol = claimed.args.volatility ?? 3;
+      const binStep = claimed.args.bin_step ?? 80;
+      const wallet = await getWalletBalances();
+      const amount = computeDeployAmount(wallet.sol, vol);
+      const bins = computeBinRange(vol, binStep);
+      const rebalanceSafety = await runSafetyChecks("deploy_position", {
+        pool_address: claimed.args.pool_address,
+        pool_name: claimed.pool_name,
+        amount_y: amount,
+        bins_below: bins.binsBelow,
+        bins_above: bins.binsAbove,
+        strategy: "bid_ask",
+        bin_step: binStep,
+        volatility: vol,
+      });
+
+      if (!rebalanceSafety.pass) {
+        execution = { blocked: true, reason: `Rebalance dibatalkan sebelum close: ${rebalanceSafety.reason}` };
+        throw new Error(rebalanceSafety.reason ?? "rebalance preflight failed");
+      }
+    }
+
     execution = await executeTool(toolName, claimed.args);
   } catch (e: any) {
     execution = { error: e?.message ?? String(e) };
@@ -168,8 +192,6 @@ export async function approvePendingDecision(id: number, resolvedBy: "web" | "te
   // If this is a rebalance (close + redeploy), trigger redeploy after successful close
   if (!execution?.error && !execution?.blocked && claimed.args?.rebalance && claimed.args?.pool_address) {
     try {
-      const { computeDeployAmount, computeBinRange, config } = await import("./config");
-      const { getWalletBalances } = await import("./tools/wallet");
       const vol = claimed.args.volatility ?? 3;
       const binStep = claimed.args.bin_step ?? 80;
       const wallet = await getWalletBalances();

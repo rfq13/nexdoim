@@ -225,7 +225,7 @@ export async function executeTool(name: string, args: Record<string, any>) {
   }
 }
 
-async function runSafetyChecks(name: string, args: any): Promise<{ pass: boolean; reason?: string }> {
+export async function runSafetyChecks(name: string, args: any): Promise<{ pass: boolean; reason?: string }> {
   if (name === "deploy_position") {
     const s = config.screening;
     if (args.bin_step != null && (args.bin_step < s.minBinStep || args.bin_step > s.maxBinStep))
