@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import NavBar from "@/components/NavBar";
+import { verifySessionToken } from "@/lib/auth";
 import "./globals.css";
 // Auto-start the scheduler when the app is loaded in `next dev` mode.
 // In production (`npm start`), server.ts also calls initCron() — the
@@ -14,7 +15,8 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
-  const isAuthenticated = cookieStore.get("admin_token")?.value === "authenticated";
+  const token = cookieStore.get("admin_token")?.value;
+  const isAuthenticated = !!token && verifySessionToken(token);
 
   return (
     <html lang="en">

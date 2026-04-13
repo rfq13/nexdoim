@@ -1,24 +1,46 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import {
+  createSessionToken,
+  checkLoginRateLimit,
+  resetLoginRateLimit,
+} from "@/lib/auth";
 
 export async function POST(req: Request) {
   try {
+    // Rate limiting by IP
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rateCheck = checkLoginRateLimit(ip);
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: `Too many login attempts. Try again in ${rateCheck.retryAfterSeconds}s`,
+        },
+        { status: 429 }
+      );
+    }
+
     const { password } = await req.json();
-    // Hardcoded static password at backend (bypassing dynamic configs)
-    const expectedPassword = process.env.ADMIN_PASSWORD || "meridian123";
+    const expectedPassword = process.env.ADMIN_PASSWORD;
 
     if (!expectedPassword) {
       return NextResponse.json(
-        { error: "ADMIN_PASSWORD is not configured in DB or .env" },
+        { error: "ADMIN_PASSWORD is not configured. Set it in .env" },
         { status: 500 }
       );
     }
 
     if (password === expectedPassword) {
-      (await cookies()).set("admin_token", "authenticated", {
+      resetLoginRateLimit(ip);
+      const token = createSessionToken();
+      (await cookies()).set("admin_token", token, {
         path: "/",
         httpOnly: true,
         sameSite: "strict",
+        secure: process.env.NODE_ENV === "production",
         maxAge: 60 * 60 * 24 * 7, // 7 days
       });
       return NextResponse.json({ success: true });

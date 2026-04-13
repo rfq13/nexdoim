@@ -26,7 +26,14 @@ async function getWallet() {
 
 const JUPITER_ULTRA_API = "https://api.jup.ag/ultra/v1";
 const JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1";
-const JUPITER_API_KEY = "b15d42e9-e0e4-4f90-a424-ae41ceeaa382";
+
+let _jupiterApiKey: string | null = null;
+async function getJupiterApiKey(): Promise<string> {
+  if (!_jupiterApiKey) {
+    _jupiterApiKey = await getSecret("JUPITER_API_KEY") || process.env.JUPITER_API_KEY || "";
+  }
+  return _jupiterApiKey;
+}
 
 export function normalizeMint(mint: string | undefined | null): string {
   if (!mint) return "";
@@ -168,8 +175,9 @@ export async function swapToken({ input_mint, output_mint, amount }: { input_min
     const amountStr = Math.floor(amount * Math.pow(10, decimals)).toString();
 
     // Try Ultra API first
+    const jupApiKey = await getJupiterApiKey();
     const orderUrl = `${JUPITER_ULTRA_API}/order?inputMint=${input_mint}&outputMint=${output_mint}&amount=${amountStr}&taker=${wallet.publicKey.toString()}`;
-    const orderRes = await fetch(orderUrl, { headers: { "x-api-key": JUPITER_API_KEY } });
+    const orderRes = await fetch(orderUrl, { headers: { "x-api-key": jupApiKey } });
 
     if (!orderRes.ok || orderRes.status === 500) {
       return await swapViaQuoteApi({ wallet, connection, input_mint, output_mint, amountStr });
@@ -184,7 +192,7 @@ export async function swapToken({ input_mint, output_mint, amount }: { input_min
 
     const execRes = await fetch(`${JUPITER_ULTRA_API}/execute`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": JUPITER_API_KEY },
+      headers: { "Content-Type": "application/json", "x-api-key": jupApiKey },
       body: JSON.stringify({ signedTransaction: signedTx, requestId: order.requestId }),
     });
     if (!execRes.ok) throw new Error(`Ultra execute failed: ${execRes.status}`);
@@ -200,13 +208,14 @@ export async function swapToken({ input_mint, output_mint, amount }: { input_min
 }
 
 async function swapViaQuoteApi({ wallet, connection, input_mint, output_mint, amountStr }: any) {
-  const quoteRes = await fetch(`${JUPITER_QUOTE_API}/quote?inputMint=${input_mint}&outputMint=${output_mint}&amount=${amountStr}&slippageBps=300`, { headers: { "x-api-key": JUPITER_API_KEY } });
+  const jupApiKey = await getJupiterApiKey();
+  const quoteRes = await fetch(`${JUPITER_QUOTE_API}/quote?inputMint=${input_mint}&outputMint=${output_mint}&amount=${amountStr}&slippageBps=300`, { headers: { "x-api-key": jupApiKey } });
   if (!quoteRes.ok) throw new Error(`Quote failed: ${quoteRes.status}`);
   const quote = await quoteRes.json();
 
   const swapRes = await fetch(`${JUPITER_QUOTE_API}/swap`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": JUPITER_API_KEY },
+    headers: { "Content-Type": "application/json", "x-api-key": jupApiKey },
     body: JSON.stringify({ quoteResponse: quote, userPublicKey: wallet.publicKey.toString(), wrapAndUnwrapSol: true }),
   });
   if (!swapRes.ok) throw new Error(`Swap tx failed: ${swapRes.status}`);

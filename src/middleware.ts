@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { verifySessionToken } from "@/lib/auth";
 
 export function middleware(request: NextRequest) {
   const token = request.cookies.get("admin_token")?.value;
@@ -11,7 +12,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!token || token !== "authenticated") {
+  if (!token || !verifySessionToken(token)) {
     if (request.nextUrl.pathname.startsWith("/api")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

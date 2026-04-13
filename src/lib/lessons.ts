@@ -482,6 +482,7 @@ export async function evolveThresholds() {
   const rationale: Record<string, string> = {};
   const screening = config.screening;
 
+  // ── 1. minOrganic ───────────────────────────────────────────
   if (winners.length >= 2 && losers.length >= 2) {
     const avgWinOrganic = avg(
       winners.map((row: any) => row.organic_score).filter(isNum),
@@ -501,7 +502,47 @@ export async function evolveThresholds() {
       );
       if (Math.abs(newVal - screening.minOrganic) > 1) {
         changes.minOrganic = Math.round(newVal);
-        rationale.minOrganic = `${screening.minOrganic} → ${Math.round(newVal)} (winners avg ${avgWinOrganic}, losers avg ${avgLoseOrganic})`;
+        rationale.minOrganic = `${screening.minOrganic} → ${Math.round(newVal)} (winners avg ${avgWinOrganic?.toFixed(0)}, losers avg ${avgLoseOrganic?.toFixed(0)})`;
+      }
+    }
+  }
+
+  // ── 2. minFeeActiveTvlRatio ─────────────────────────────────
+  {
+    const winnerFees = winners.map((r: any) => r.fee_tvl_ratio).filter(isNum);
+    const loserFees = losers.map((r: any) => r.fee_tvl_ratio).filter(isNum);
+    const current = screening.minFeeActiveTvlRatio;
+
+    if (winnerFees.length >= 2) {
+      const minWinnerFee = Math.min(...winnerFees);
+      if (minWinnerFee > current * 1.2) {
+        const target = minWinnerFee * 0.85;
+        const newVal = clampChange(current, target, MAX_CHANGE_PER_STEP);
+        const rounded = Number(newVal.toFixed(2));
+        if (rounded > current) {
+          changes.minFeeActiveTvlRatio = rounded;
+          rationale.minFeeActiveTvlRatio = `${current} → ${rounded} (min winner fee_tvl=${minWinnerFee.toFixed(2)})`;
+        }
+      }
+    }
+  }
+
+  // ── 3. maxBinStep ───────────────────────────────────────────
+  {
+    const winnerBins = winners.map((r: any) => r.bin_step).filter(isNum);
+    const loserBins = losers.map((r: any) => r.bin_step).filter(isNum);
+    const current = screening.maxBinStep;
+
+    if (loserBins.length >= 2) {
+      const loserP25 = percentile(loserBins, 25);
+      if (loserP25 < current) {
+        const target = loserP25 * 1.15;
+        const newVal = clampChange(current, target, MAX_CHANGE_PER_STEP);
+        const rounded = Math.round(newVal);
+        if (rounded < current && rounded >= 20) {
+          changes.maxBinStep = rounded;
+          rationale.maxBinStep = `${current} → ${rounded} (losers clustered at ~${Math.round(loserP25)})`;
+        }
       }
     }
   }
@@ -511,7 +552,7 @@ export async function evolveThresholds() {
   for (const [key, value] of Object.entries(changes)) {
     (screening as Record<string, unknown>)[key] = value;
   }
-  await saveConfig({ ...changes, _lastEvolution: new Date().toISOString() });
+  await saveConfig({ screening: { ...changes }, _lastEvolution: new Date().toISOString() });
 
   const summary = Object.entries(changes)
     .map(([key, value]) => `${key}=${value}`)
@@ -523,6 +564,14 @@ export async function evolveThresholds() {
 
   log("lessons", `Thresholds evolved: ${JSON.stringify(changes)}`);
   return { changes, rationale };
+}
+
+function percentile(arr: number[], p: number): number {
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
 function avg(values: number[]): number | null {

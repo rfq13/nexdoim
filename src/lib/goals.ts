@@ -177,48 +177,60 @@ export function analyzeStrategy(progress: GoalProgress): ProposedAdjustments | n
     ? daily_rate_needed / daily_rate_actual
     : 2;
 
+  // ── Circuit breaker: hard floors to prevent death spiral ──
+  // These limits ensure the goal system never degrades quality below safe thresholds
+  const FLOOR = {
+    minOrganic: 50,       // never accept pools with <50% organic activity
+    minMcap: 50_000,      // never accept mcap below $50k
+    minTvl: 3_000,        // never accept TVL below $3k
+    minVolume: 100,       // never accept volume below $100
+    maxPositions: 5,      // never open more than 5 positions
+    maxPositionSizePct: 0.45, // never risk more than 45% of wallet per position
+    screeningIntervalMin: 10, // never screen faster than every 10 minutes
+  };
+
   if (pace_label === "behind") {
     return {
       reason: `Behind target: butuh $${daily_rate_needed.toFixed(0)}/hari tapi baru $${daily_rate_actual.toFixed(0)}/hari. Gap: $${gap_usd.toFixed(0)} dalam ${days_remaining} hari.`,
       changes: {
         risk: {
-          maxPositions: Math.min(config.risk.maxPositions + 1, 5),
+          maxPositions: Math.min(config.risk.maxPositions + 1, FLOOR.maxPositions),
         },
         screening: {
-          minMcap: Math.max(Math.round(config.screening.minMcap * 0.7), 30_000),
-          minTvl: Math.max(Math.round(config.screening.minTvl * 0.8), 2_000),
-          minVolume: Math.max(Math.round(config.screening.minVolume * 0.7), 100),
+          minMcap: Math.max(Math.round(config.screening.minMcap * 0.8), FLOOR.minMcap),
+          minTvl: Math.max(Math.round(config.screening.minTvl * 0.85), FLOOR.minTvl),
+          minVolume: Math.max(Math.round(config.screening.minVolume * 0.8), FLOOR.minVolume),
         },
         schedule: {
-          screeningIntervalMin: Math.max(config.schedule.screeningIntervalMin - 5, 10),
+          screeningIntervalMin: Math.max(config.schedule.screeningIntervalMin - 5, FLOOR.screeningIntervalMin),
         },
       },
-      risk_note: `Memperbanyak posisi +1, melonggarkan filter (mcap/tvl/volume turun ~20-30%), screening lebih sering. Risiko: exposure lebih tinggi.`,
+      risk_note: `Memperbanyak posisi +1, melonggarkan filter sedikit (mcap/tvl/volume turun ~15-20%), screening lebih sering. Circuit breaker aktif: organic >= ${FLOOR.minOrganic}, mcap >= $${FLOOR.minMcap}, positions <= ${FLOOR.maxPositions}.`,
     };
   }
 
-  // critical
+  // critical — more aggressive but still bounded by circuit breakers
   return {
     reason: `Critical gap: butuh ${multiplier.toFixed(1)}x percepatan. $${daily_rate_needed.toFixed(0)}/hari vs actual $${daily_rate_actual.toFixed(0)}/hari. Gap: $${gap_usd.toFixed(0)} dalam ${days_remaining} hari.`,
     changes: {
       risk: {
-        maxPositions: Math.min(config.risk.maxPositions + 2, 7),
+        maxPositions: Math.min(config.risk.maxPositions + 1, FLOOR.maxPositions),
       },
       management: {
-        deployAmountSol: Math.min(config.management.deployAmountSol * 1.5, config.risk.maxDeployAmount),
-        positionSizePct: Math.min(config.management.positionSizePct * 1.3, 0.6),
+        deployAmountSol: Math.min(config.management.deployAmountSol * 1.2, config.risk.maxDeployAmount),
+        positionSizePct: Math.min(config.management.positionSizePct * 1.15, FLOOR.maxPositionSizePct),
       },
       screening: {
-        minMcap: Math.max(Math.round(config.screening.minMcap * 0.5), 20_000),
-        minTvl: Math.max(Math.round(config.screening.minTvl * 0.6), 1_000),
-        minVolume: Math.max(Math.round(config.screening.minVolume * 0.5), 50),
-        minOrganic: Math.max(config.screening.minOrganic - 10, 30),
+        minMcap: Math.max(Math.round(config.screening.minMcap * 0.7), FLOOR.minMcap),
+        minTvl: Math.max(Math.round(config.screening.minTvl * 0.75), FLOOR.minTvl),
+        minVolume: Math.max(Math.round(config.screening.minVolume * 0.7), FLOOR.minVolume),
+        minOrganic: Math.max(config.screening.minOrganic - 5, FLOOR.minOrganic),
       },
       schedule: {
-        screeningIntervalMin: Math.max(config.schedule.screeningIntervalMin - 10, 5),
+        screeningIntervalMin: Math.max(config.schedule.screeningIntervalMin - 5, FLOOR.screeningIntervalMin),
       },
     },
-    risk_note: `Agresif: posisi +2, deploy size +50%, filter dilonggarkan signifikan, screening sangat sering. Risiko tinggi — monitor ketat.`,
+    risk_note: `Moderat-agresif: posisi +1, deploy size +20%, filter dilonggarkan dengan circuit breaker. Batas aman: organic >= ${FLOOR.minOrganic}, mcap >= $${FLOOR.minMcap}, max ${FLOOR.maxPositions} posisi, max ${FLOOR.maxPositionSizePct * 100}% wallet per posisi.`,
   };
 }
 
