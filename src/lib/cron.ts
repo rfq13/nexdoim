@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { agentLoop } from "./agent";
+import { getProviderCircuitBreakerStatus } from "./agent";
 import { config, computeDeployAmount, computeBinRange } from "./config";
 import { log } from "./logger";
 import { getMyPositions, getPositionPnl } from "./tools/dlmm";
@@ -219,6 +220,7 @@ export function getCronStatus() {
     process_started_at: _processStartedAt,
     process_uptime_sec: Math.floor((Date.now() - _processStartedAt) / 1000),
     now: Date.now(),
+    provider_circuit_breaker: getProviderCircuitBreakerStatus(),
     jobs: Object.values(_jobHealth),
   };
 }

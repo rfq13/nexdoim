@@ -21,6 +21,15 @@ interface CronStatus {
   process_started_at: number;
   process_uptime_sec: number;
   now: number;
+  provider_circuit_breaker?: {
+    open: boolean;
+    open_until: number | null;
+    remaining_ms: number;
+    remaining_sec: number;
+    consecutive_errors: number;
+    threshold: number;
+    cooldown_ms: number;
+  };
   jobs: JobHealth[];
 }
 
@@ -210,6 +219,7 @@ export default function SchedulerPage() {
 
   const now = Date.now();
   const running = status?.running ?? false;
+  const providerCircuit = status?.provider_circuit_breaker;
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
@@ -271,6 +281,27 @@ export default function SchedulerPage() {
                 {status ? new Date(status.process_started_at).toLocaleString() : "—"}
               </div>
             </div>
+          </div>
+
+          <div className={`min-w-60 rounded-lg border px-3 py-2 text-xs ${
+            providerCircuit?.open
+              ? "border-red-500/40 bg-red-500/10 text-red-300"
+              : "border-(--border) bg-black/10 text-(--muted)"
+          }`}>
+            <div className="font-semibold uppercase tracking-wide text-[10px] mb-1">
+              Provider Circuit Breaker
+            </div>
+            <div>
+              Status: {providerCircuit?.open ? "OPEN" : "CLOSED"}
+            </div>
+            <div>
+              Consecutive errors: {providerCircuit?.consecutive_errors ?? 0}/{providerCircuit?.threshold ?? 0}
+            </div>
+            {providerCircuit?.open && (
+              <div>
+                Cooldown: {providerCircuit.remaining_sec}s tersisa
+              </div>
+            )}
           </div>
         </div>
       </div>

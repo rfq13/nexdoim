@@ -68,6 +68,21 @@ let _providerCircuitOpenUntil = 0;
 const PROVIDER_CB_THRESHOLD = 4;
 const PROVIDER_CB_COOLDOWN_MS = 2 * 60_000;
 
+export function getProviderCircuitBreakerStatus() {
+  const now = Date.now();
+  const isOpen = now < _providerCircuitOpenUntil;
+  const remainingMs = isOpen ? _providerCircuitOpenUntil - now : 0;
+  return {
+    open: isOpen,
+    open_until: _providerCircuitOpenUntil || null,
+    remaining_ms: remainingMs,
+    remaining_sec: Math.ceil(remainingMs / 1000),
+    consecutive_errors: _consecutiveTransientProviderErrors,
+    threshold: PROVIDER_CB_THRESHOLD,
+    cooldown_ms: PROVIDER_CB_COOLDOWN_MS,
+  };
+}
+
 function getToolsForRole(agentType: string) {
   if (agentType === "MANAGER")
     return tools.filter((t) => MANAGER_TOOLS.has(t.function.name));
