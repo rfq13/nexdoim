@@ -63,6 +63,13 @@ interface DecisionJsonPayload {
   volatility?: number;
 }
 
+type ToastTone = "success" | "error" | "info";
+
+interface RejectDialogTarget {
+  type: "banner" | "pending";
+  pendingId?: number;
+}
+
 function parseDecisionJsonFromText(text: string): DecisionJsonPayload | null {
   if (!text) return null;
   const markerIdx = text.lastIndexOf("DECISION_JSON:");
@@ -147,9 +154,21 @@ export function ChatInner({
     Record<number, number>
   >({});
   const [actingPendingId, setActingPendingId] = useState<number | null>(null);
+  const [toast, setToast] = useState<{ tone: ToastTone; text: string } | null>(
+    null,
+  );
+  const [rejectDialog, setRejectDialog] = useState<RejectDialogTarget | null>(
+    null,
+  );
+  const [rejectReasonInput, setRejectReasonInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const hasSentInitialMsg = useRef(false);
+
+  const showToast = useCallback((tone: ToastTone, text: string) => {
+    setToast({ tone, text });
+    window.setTimeout(() => setToast(null), 2400);
+  }, []);
 
   // Load decision context when ?decisionId= is present
   useEffect(() => {
@@ -182,17 +201,17 @@ export function ChatInner({
         { method: "POST" },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast("success", `Pending #${decisionBanner.id} di-approve.`);
       // Bounce back to dashboard to see execution result
       setTimeout(() => router.push("/"), 800);
     } catch (e: any) {
-      alert(`Approve gagal: ${e.message}`);
+      showToast("error", `Approve gagal: ${e.message}`);
       setActingOnDecision(null);
     }
   };
 
-  const rejectFromChat = async () => {
+  const rejectFromChat = async (reason?: string) => {
     if (!decisionBanner || actingOnDecision) return;
-    const reason = window.prompt("Alasan reject (opsional):") ?? undefined;
     setActingOnDecision("reject");
     try {
       const res = await fetch(
@@ -204,9 +223,10 @@ export function ChatInner({
         },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast("success", `Pending #${decisionBanner.id} di-reject.`);
       setTimeout(() => router.push("/"), 500);
     } catch (e: any) {
-      alert(`Reject gagal: ${e.message}`);
+      showToast("error", `Reject gagal: ${e.message}`);
       setActingOnDecision(null);
     }
   };
@@ -231,8 +251,9 @@ export function ChatInner({
         [msgIndex]: data.pending_id,
       }));
       loadConversations();
+      showToast("success", `Pending #${data.pending_id} berhasil dibuat.`);
     } catch (e: any) {
-      alert(`Gagal membuat pending: ${e.message}`);
+      showToast("error", `Gagal membuat pending: ${e.message}`);
     } finally {
       setCreatingFromMsg(null);
     }
@@ -246,17 +267,16 @@ export function ChatInner({
         method: "POST",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      alert(`Pending #${id} di-approve dan dieksekusi.`);
+      showToast("success", `Pending #${id} di-approve dan dieksekusi.`);
     } catch (e: any) {
-      alert(`Approve gagal: ${e.message}`);
+      showToast("error", `Approve gagal: ${e.message}`);
     } finally {
       setActingPendingId(null);
     }
   };
 
-  const rejectPendingById = async (id: number) => {
+  const rejectPendingById = async (id: number, reason?: string) => {
     if (actingPendingId) return;
-    const reason = window.prompt("Alasan reject (opsional):") ?? undefined;
     setActingPendingId(id);
     try {
       const res = await fetch(`/api/pending-decisions/${id}/reject`, {
@@ -265,11 +285,30 @@ export function ChatInner({
         body: JSON.stringify({ reason }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      alert(`Pending #${id} di-reject.`);
+      showToast("success", `Pending #${id} di-reject.`);
     } catch (e: any) {
-      alert(`Reject gagal: ${e.message}`);
+      showToast("error", `Reject gagal: ${e.message}`);
     } finally {
       setActingPendingId(null);
+    }
+  };
+
+  const openRejectDialog = (target: RejectDialogTarget) => {
+    setRejectReasonInput("");
+    setRejectDialog(target);
+  };
+
+  const submitRejectDialog = async () => {
+    if (!rejectDialog) return;
+    const reason = rejectReasonInput.trim() || undefined;
+    const target = rejectDialog;
+    setRejectDialog(null);
+    if (target.type === "banner") {
+      await rejectFromChat(reason);
+      return;
+    }
+    if (typeof target.pendingId === "number") {
+      await rejectPendingById(target.pendingId, reason);
     }
   };
 
@@ -433,7 +472,7 @@ export function ChatInner({
   }, [initialMessage]);
 
   return (
-    <div className="flex h-full min-h-[500px] gap-0 relative">
+    <div className="flex h-full min-h-125 gap-0 relative">
       {/* ── Sidebar overlay (mobile) ──────────────────────────────── */}
       {sidebarOpen && (
         <div
@@ -604,7 +643,7 @@ export function ChatInner({
             <select
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="hidden sm:block bg-(--card) border border-(--border) rounded-lg px-2 py-1 text-xs max-w-[160px]"
+              className="hidden sm:block bg-(--card) border border-(--border) rounded-lg px-2 py-1 text-xs max-w-40"
             >
               {models.length === 0 && <option value="">No model</option>}
               {models.map((m) => (
@@ -641,7 +680,7 @@ export function ChatInner({
                 </p>
               </div>
               {decisionBanner.status === "pending" && (
-                <div className="flex gap-1.5 flex-shrink-0">
+                <div className="flex gap-1.5 shrink-0">
                   <button
                     onClick={approveFromChat}
                     disabled={!!actingOnDecision}
@@ -650,7 +689,7 @@ export function ChatInner({
                     {actingOnDecision === "approve" ? "..." : "Approve"}
                   </button>
                   <button
-                    onClick={rejectFromChat}
+                    onClick={() => openRejectDialog({ type: "banner" })}
                     disabled={!!actingOnDecision}
                     className="text-xs px-2.5 py-1 rounded-md bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
                   >
@@ -665,13 +704,13 @@ export function ChatInner({
         {/* Messages */}
         <div className="flex-1 overflow-y-auto space-y-4 pr-1">
           {loadingHistory && (
-            <div className="flex justify-center py-8 text-[var(--muted)] text-sm">
+            <div className="flex justify-center py-8 text-(--muted) text-sm">
               Memuat riwayat...
             </div>
           )}
 
           {!loadingHistory && messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-[var(--muted)]">
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-(--muted)">
               <div className="text-4xl">◈</div>
               <div className="text-sm">
                 Tanya apapun tentang posisi, pool, atau strategi
@@ -688,7 +727,7 @@ export function ChatInner({
                       setInput(s);
                       inputRef.current?.focus();
                     }}
-                    className="text-xs border border-[var(--border)] rounded-full px-3 py-1.5 hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                    className="text-xs border border-(--border) rounded-full px-3 py-1.5 hover:border-(--accent) hover:text-(--accent) transition-colors"
                   >
                     {s}
                   </button>
@@ -704,10 +743,10 @@ export function ChatInner({
                 className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : ""}`}
               >
                 <div
-                  className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold mt-0.5 ${
+                  className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-xs font-bold mt-0.5 ${
                     m.role === "user"
-                      ? "bg-[var(--accent)]/20 text-[var(--accent)]"
-                      : "bg-[var(--card)] border border-[var(--border)] text-[var(--muted)]"
+                      ? "bg-(--accent)/20 text-(--accent)"
+                      : "bg-(--card) border border-(--border) text-(--muted)"
                   }`}
                 >
                   {m.role === "user" ? "U" : "◈"}
@@ -715,8 +754,8 @@ export function ChatInner({
                 <div
                   className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                     m.role === "user"
-                      ? "bg-[var(--accent)]/15 rounded-tr-sm"
-                      : "bg-[var(--card)] border border-[var(--border)] rounded-tl-sm"
+                      ? "bg-(--accent)/15 rounded-tr-sm"
+                      : "bg-(--card) border border-(--border) rounded-tl-sm"
                   }`}
                 >
                   {m.role === "user" ? (
@@ -786,7 +825,12 @@ export function ChatInner({
                                       : "Approve"}
                                   </button>
                                   <button
-                                    onClick={() => rejectPendingById(pendingId)}
+                                    onClick={() =>
+                                      openRejectDialog({
+                                        type: "pending",
+                                        pendingId,
+                                      })
+                                    }
                                     disabled={actingPendingId === pendingId}
                                     className="text-xs px-2.5 py-1 rounded-md bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
                                   >
@@ -805,21 +849,21 @@ export function ChatInner({
 
           {loading && (
             <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold bg-[var(--card)] border border-[var(--border)] text-[var(--muted)]">
+              <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-xs font-bold bg-(--card) border border-(--border) text-(--muted)">
                 ◈
               </div>
-              <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl rounded-tl-sm px-4 py-3">
+              <div className="bg-(--card) border border-(--border) rounded-2xl rounded-tl-sm px-4 py-3">
                 <div className="flex gap-1 items-center h-5">
                   <span
-                    className="w-1.5 h-1.5 bg-[var(--muted)] rounded-full animate-bounce"
+                    className="w-1.5 h-1.5 bg-(--muted) rounded-full animate-bounce"
                     style={{ animationDelay: "0ms" }}
                   />
                   <span
-                    className="w-1.5 h-1.5 bg-[var(--muted)] rounded-full animate-bounce"
+                    className="w-1.5 h-1.5 bg-(--muted) rounded-full animate-bounce"
                     style={{ animationDelay: "150ms" }}
                   />
                   <span
-                    className="w-1.5 h-1.5 bg-[var(--muted)] rounded-full animate-bounce"
+                    className="w-1.5 h-1.5 bg-(--muted) rounded-full animate-bounce"
                     style={{ animationDelay: "300ms" }}
                   />
                 </div>
@@ -830,8 +874,8 @@ export function ChatInner({
         </div>
 
         {/* Input */}
-        <div className="pt-3 border-t border-[var(--border)] mt-3">
-          <div className="flex gap-2 items-end bg-[var(--card)] border border-[var(--border)] rounded-2xl px-4 py-3 focus-within:border-[var(--accent)] transition-colors">
+        <div className="pt-3 border-t border-(--border) mt-3">
+          <div className="flex gap-2 items-end bg-(--card) border border-(--border) rounded-2xl px-4 py-3 focus-within:border-(--accent) transition-colors">
             <textarea
               ref={inputRef}
               value={input}
@@ -844,20 +888,20 @@ export function ChatInner({
               onKeyDown={handleKey}
               placeholder="Tanya agent... (Enter kirim, Shift+Enter baris baru)"
               rows={1}
-              className="flex-1 bg-transparent text-sm resize-none outline-none placeholder:text-[var(--muted)] max-h-[120px]"
+              className="flex-1 bg-transparent text-sm resize-none outline-none placeholder:text-(--muted) max-h-30"
               style={{ height: "24px" }}
             />
             <button
               onClick={send}
               disabled={loading || !input.trim()}
-              className="w-8 h-8 flex-shrink-0 rounded-full bg-[var(--accent)] flex items-center justify-center disabled:opacity-30 transition-opacity hover:opacity-80"
+              className="w-8 h-8 shrink-0 rounded-full bg-(--accent) flex items-center justify-center disabled:opacity-30 transition-opacity hover:opacity-80"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
                 <path d="M2 21l21-9L2 3v7l15 2-15 2z" />
               </svg>
             </button>
           </div>
-          <p className="text-xs text-[var(--muted)] mt-1.5 pl-1">
+          <p className="text-xs text-(--muted) mt-1.5 pl-1">
             Role:{" "}
             <span className={`font-medium ${ROLE_COLORS[role].split(" ")[0]}`}>
               {role}
@@ -865,13 +909,61 @@ export function ChatInner({
             <span className="mx-1.5">·</span>
             {ROLE_DESCRIPTIONS[role]}
             {activeConvId && (
-              <span className="mx-1.5 text-[var(--muted)]/50">
+              <span className="mx-1.5 text-(--muted)/50">
                 · Percakapan tersimpan
               </span>
             )}
           </p>
         </div>
       </div>
+
+      {toast && (
+        <div className="fixed right-4 bottom-4 z-50">
+          <div
+            className={`rounded-lg border px-3 py-2 text-xs shadow-lg ${
+              toast.tone === "success"
+                ? "bg-green-500/15 text-green-300 border-green-500/40"
+                : toast.tone === "error"
+                  ? "bg-red-500/15 text-red-300 border-red-500/40"
+                  : "bg-(--card) text-(--text) border-(--border)"
+            }`}
+          >
+            {toast.text}
+          </div>
+        </div>
+      )}
+
+      {rejectDialog && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl border border-(--border) bg-(--bg) p-4">
+            <h3 className="text-sm font-semibold">Reject Pending Decision</h3>
+            <p className="mt-1 text-xs text-(--muted)">
+              Isi alasan reject (opsional), lalu konfirmasi.
+            </p>
+            <textarea
+              value={rejectReasonInput}
+              onChange={(e) => setRejectReasonInput(e.target.value)}
+              rows={3}
+              className="mt-3 w-full rounded-lg border border-(--border) bg-(--card) px-3 py-2 text-sm outline-none focus:border-(--accent)"
+              placeholder="Alasan reject (opsional)"
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                onClick={() => setRejectDialog(null)}
+                className="text-xs px-2.5 py-1 rounded-md border border-(--border) hover:border-(--accent) transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={submitRejectDialog}
+                className="text-xs px-2.5 py-1 rounded-md bg-red-500/15 text-red-300 border border-red-500/40 hover:bg-red-500/25 transition-colors"
+              >
+                Konfirmasi Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
