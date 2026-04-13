@@ -163,14 +163,16 @@ export default function NavBar() {
         </a>
 
         {/* Desktop links + bell */}
-        <div className="hidden md:flex items-center gap-5 overflow-x-auto">
-          {LINKS.map((l) => (
-            <a key={l.href} href={l.href} className={`text-sm whitespace-nowrap transition-colors ${linkCls(l.href)}`}>
-              {l.label}
-            </a>
-          ))}
-          {/* Notification bell with floating dropdown */}
-          <div className="relative" ref={notifRef}>
+        <div className="hidden md:flex items-center gap-5">
+          <div className="flex items-center gap-5 min-w-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+            {LINKS.map((l) => (
+              <a key={l.href} href={l.href} className={`text-sm whitespace-nowrap transition-colors ${linkCls(l.href)}`}>
+                {l.label}
+              </a>
+            ))}
+          </div>
+          {/* Notification bell — outside overflow container so dropdown isn't clipped */}
+          <div className="relative shrink-0" ref={notifRef}>
             {bellButton}
             {notifDropdown}
           </div>
