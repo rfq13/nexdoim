@@ -52,13 +52,23 @@ interface DecisionBanner {
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-(--muted)">Memuat...</div>}>
-      <ChatInner />
-    </Suspense>
+    <div className="h-[calc(100vh-80px)]">
+      <Suspense fallback={<div className="p-8 text-sm text-(--muted)">Memuat...</div>}>
+        <ChatInner />
+      </Suspense>
+    </div>
   );
 }
 
-function ChatInner() {
+export function ChatInner({
+  initialMessage,
+  initialRole,
+  onClose,
+}: {
+  initialMessage?: string;
+  initialRole?: AgentRole;
+  onClose?: () => void;
+}) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const decisionIdParam = searchParams.get("decisionId");
@@ -67,10 +77,10 @@ function ChatInner() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialMessage || "");
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [role, setRole] = useState<AgentRole>("GENERAL");
+  const [role, setRole] = useState<AgentRole>(initialRole || "GENERAL");
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -79,6 +89,7 @@ function ChatInner() {
   const [actingOnDecision, setActingOnDecision] = useState<"approve" | "reject" | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const hasSentInitialMsg = useRef(false);
 
   // Load decision context when ?decisionId= is present
   useEffect(() => {
@@ -196,11 +207,10 @@ function ChatInner() {
     setConversations((prev) => prev.filter((c) => c.id !== id));
   };
 
-  const send = async () => {
-    if (!input.trim() || loading) return;
-    const userMsg = input.trim();
+  const sendMsg = async (textToSubmit: string) => {
+    if (!textToSubmit.trim() || loading) return;
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+    setMessages((prev) => [...prev, { role: "user", content: textToSubmit }]);
     setLoading(true);
 
     try {
@@ -208,7 +218,7 @@ function ChatInner() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: userMsg,
+          message: textToSubmit,
           role,
           model: selectedModel || null,
           conversation_id: activeConvId,
@@ -249,12 +259,29 @@ function ChatInner() {
     }
   };
 
+  const send = () => sendMsg(input);
+
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(input); }
   };
 
+  useEffect(() => {
+    if (initialMessage && !hasSentInitialMsg.current) {
+      hasSentInitialMsg.current = true;
+      setInput(initialMessage);
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          inputRef.current.style.height = "auto";
+          inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
+        }
+      }, 50);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessage]);
+
   return (
-    <div className="flex h-[calc(100vh-80px)] gap-0 relative">
+    <div className="flex h-full min-h-[500px] gap-0 relative">
       {/* ── Sidebar overlay (mobile) ──────────────────────────────── */}
       {sidebarOpen && (
         <div
@@ -336,9 +363,20 @@ function ChatInner() {
         {/* Header */}
         <div className="flex items-center justify-between pb-2 sm:pb-3 border-b border-(--border) mb-2 sm:mb-3 pt-0.5 gap-2">
           <div className="flex items-center gap-2 shrink-0">
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="text-(--muted) hover:text-(--text) transition-colors p-1 rounded"
+                title="Kembali"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={() => setSidebarOpen((v) => !v)}
-              className="text-(--muted) hover:text-(--text) transition-colors p-1 rounded"
+              className="text-(--muted) hover:text-(--text) transition-colors p-1 rounded md:hidden"
               title="Toggle sidebar"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

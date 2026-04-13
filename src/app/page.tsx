@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Markdown } from "@/components/Markdown";
 import { PendingDecisions } from "@/components/PendingDecisions";
+import { ChatInner } from "./chat/page";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -543,339 +544,50 @@ function Tooltip({ text, children }: { text: string; children: React.ReactNode }
   );
 }
 
-type RunStatus = "done" | "skipped" | "error";
-
-interface LogEntry {
-  ts: number;
-  category: string;
-  message: string;
-}
-
-interface CronRunSummary {
-  id: number;
-  job_name: string;
-  started_at: string;
-  ended_at: string | null;
-  duration_ms: number | null;
-  success: boolean | null;
-  error: string | null;
-}
-
-interface CronRunDetail extends CronRunSummary {
-  output: string | null;
-  logs: LogEntry[];
-}
-
-interface RunResult {
-  action: "screening" | "management";
-  runId: number;
-  status: RunStatus;
-  output: string;
-  logs: LogEntry[];
-  durationMs: number | null;
-  error: string | null;
-  at: number;
-}
-
-function stripInternalJson(text: string): string {
-  return text
-    .replace(/DECISION_JSON:\s*\{[\s\S]*?\}\s*$/m, "")
-    .replace(/MANAGEMENT_JSON:\s*\[[\s\S]*?\]\s*$/m, "")
-    .trim();
-}
-
-function classifyOutput(run: CronRunDetail): { status: RunStatus; output: string } {
-  if (run.success === false) {
-    return { status: "error", output: run.error || run.output || "Run gagal tanpa detail" };
-  }
-  const raw = run.output ?? "";
-  if (raw.startsWith("SKIPPED:")) return { status: "skipped", output: raw.slice(8).trim() };
-  if (raw.startsWith("ERROR:"))   return { status: "error",   output: raw.slice(6).trim() };
-  const text = stripInternalJson(raw);
-  return { status: "done", output: text || "Run selesai — tidak ada output tertulis." };
-}
-
 function ActionPanel() {
-  const [running, setRunning] = useState<"screening" | "management" | null>(null);
-  const [result, setResult] = useState<RunResult | null>(null);
-  const [polling, setPolling] = useState<{ elapsed: number } | null>(null);
-  const [showLogs, setShowLogs] = useState(false);
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stopPolling = useCallback(() => {
-    if (pollTimer.current) {
-      clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    }
-    setPolling(null);
-  }, []);
-
-  useEffect(() => () => stopPolling(), [stopPolling]);
-
-  const pollForRun = useCallback(
-    (action: "screening" | "management", triggeredAt: number) => {
-      const start = Date.now();
-      const jobName = action;
-      // Buffer window: consider any run that started within 10s of the trigger as "ours".
-      const windowMs = 10_000;
-      const maxWaitMs = 5 * 60_000; // give up after 5 minutes
-
-      const tick = async () => {
-        const elapsed = Date.now() - start;
-        setPolling({ elapsed });
-
-        if (elapsed > maxWaitMs) {
-          stopPolling();
-          setRunning(null);
-          setResult({
-            action,
-            runId: 0,
-            status: "error",
-            output: "Timeout menunggu hasil — cek halaman Scheduler untuk riwayat run.",
-            logs: [],
-            durationMs: null,
-            error: "Polling timeout after 5 minutes",
-            at: Date.now(),
-          });
-          return;
-        }
-
-        try {
-          const listRes = await fetch(`/api/cron/runs?job=${jobName}&limit=5`, { cache: "no-store" });
-          if (!listRes.ok) return;
-          const listData = await listRes.json();
-          const runs: CronRunSummary[] = listData.runs ?? [];
-
-          // Find a run started at or after trigger time (with small backward buffer)
-          const candidate = runs.find((r) => {
-            const startedMs = new Date(r.started_at).getTime();
-            return startedMs >= triggeredAt - windowMs;
-          });
-
-          if (!candidate) return; // still waiting for the run to show up
-          if (!candidate.ended_at) return; // run is in progress
-
-          // Fetch full detail with logs + output
-          const detailRes = await fetch(`/api/cron/runs/${candidate.id}`, { cache: "no-store" });
-          if (!detailRes.ok) return;
-          const detailData = await detailRes.json();
-          const run: CronRunDetail = detailData.run;
-
-          const { status, output } = classifyOutput(run);
-          stopPolling();
-          setRunning(null);
-          setResult({
-            action,
-            runId: run.id,
-            status,
-            output,
-            logs: run.logs ?? [],
-            durationMs: run.duration_ms,
-            error: run.error,
-            at: Date.now(),
-          });
-        } catch {
-          // Network blip — keep polling
-        }
-      };
-
-      // Fire immediately, then every 2s
-      tick();
-      pollTimer.current = setInterval(tick, 2000);
-    },
-    [stopPolling]
-  );
-
-  const run = async (action: "screening" | "management") => {
-    if (running) return;
-    setRunning(action);
-    setResult(null);
-    setShowLogs(false);
-    try {
-      const endpoint = action === "screening" ? "/api/agent/screen" : "/api/agent/manage";
-      const res = await fetch(endpoint, { method: "POST" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const triggeredAt = data.triggered_at ?? Date.now();
-      pollForRun(action, triggeredAt);
-    } catch (e: any) {
-      setRunning(null);
-      setResult({
-        action,
-        runId: 0,
-        status: "error",
-        output: e?.message || "Request gagal",
-        logs: [],
-        durationMs: null,
-        error: e?.message || null,
-        at: Date.now(),
-      });
-    }
-  };
+  const [chatModal, setChatModal] = useState<{ action: "screening" | "management" } | null>(null);
 
   return (
     <div className="pt-1 space-y-3">
       {/* Action buttons */}
       <div className="flex gap-2 flex-wrap">
         <button
-          onClick={() => run("screening")}
-          disabled={running !== null}
-          className="px-4 py-2 rounded-lg text-sm font-medium transition-all bg-green-500/15 text-green-300 border border-green-500/30 hover:bg-green-500/25 hover:border-green-500/50 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          onClick={() => setChatModal({ action: "screening" })}
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-all bg-green-500/15 text-green-300 border border-green-500/30 hover:bg-green-500/25 hover:border-green-500/50 inline-flex items-center gap-2"
         >
-          {running === "screening" ? (
-            <>
-              <span className="w-3 h-3 rounded-full bg-green-400 animate-pulse" />
-              Screening berjalan...
-            </>
-          ) : (
-            <>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-              </svg>
-              Run Screening
-            </>
-          )}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+          </svg>
+          Run Screening
         </button>
         <button
-          onClick={() => run("management")}
-          disabled={running !== null}
-          className="px-4 py-2 rounded-lg text-sm font-medium transition-all bg-blue-500/15 text-blue-300 border border-blue-500/30 hover:bg-blue-500/25 hover:border-blue-500/50 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          onClick={() => setChatModal({ action: "management" })}
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-all bg-blue-500/15 text-blue-300 border border-blue-500/30 hover:bg-blue-500/25 hover:border-blue-500/50 inline-flex items-center gap-2"
         >
-          {running === "management" ? (
-            <>
-              <span className="w-3 h-3 rounded-full bg-blue-400 animate-pulse" />
-              Management berjalan...
-            </>
-          ) : (
-            <>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /><path d="M12 6v6l4 2" />
-              </svg>
-              Run Management
-            </>
-          )}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /><path d="M12 6v6l4 2" />
+          </svg>
+          Run Management
         </button>
-        {running && polling && (
-          <div className="text-xs text-(--muted) self-center pl-1 flex items-center gap-2">
-            <span>Menunggu hasil... ({Math.floor(polling.elapsed / 1000)}s)</span>
-            <span className="text-[10px] text-(--muted)/70">· fire-and-forget → polling DB</span>
-          </div>
-        )}
       </div>
 
-      {/* Result panel */}
-      {result && (() => {
-        const statusStyles: Record<RunStatus, { border: string; badge: string; label: string }> = {
-          done:    { border: "border-(--border)",  badge: "bg-green-500/15 text-green-400",   label: "DONE" },
-          skipped: { border: "border-yellow-500/40", badge: "bg-yellow-500/15 text-yellow-400", label: "SKIPPED" },
-          error:   { border: "border-red-500/40",  badge: "bg-red-500/15 text-red-400",       label: "ERROR" },
-        };
-        const s = statusStyles[result.status];
-        const durationLabel = result.durationMs != null
-          ? (result.durationMs < 1000 ? `${result.durationMs}ms` : `${(result.durationMs / 1000).toFixed(1)}s`)
-          : null;
-
-        return (
-          <div className={`bg-(--card) border rounded-xl overflow-hidden ${s.border}`}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-(--border) bg-black/20 flex-wrap gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold ${
-                  result.action === "screening"
-                    ? "bg-green-500/15 text-green-400"
-                    : "bg-blue-500/15 text-blue-400"
-                }`}>
-                  {result.action === "screening" ? "SCREENING" : "MANAGEMENT"}
-                </span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold ${s.badge}`}>
-                  {s.label}
-                </span>
-                <span className="text-xs text-(--muted)">
-                  {new Date(result.at).toLocaleTimeString()}
-                </span>
-                {durationLabel && (
-                  <span className="text-xs text-(--muted) font-mono">· {durationLabel}</span>
-                )}
-                {result.runId > 0 && (
-                  <span className="text-[10px] text-(--muted)/70 font-mono">#{result.runId}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                {result.logs.length > 0 && (
-                  <button
-                    onClick={() => setShowLogs((v) => !v)}
-                    className={`text-[10px] px-2 py-1 rounded-md border transition-colors ${
-                      showLogs
-                        ? "border-(--accent) text-(--accent)"
-                        : "border-(--border) text-(--muted) hover:text-(--text) hover:border-(--accent)"
-                    }`}
-                  >
-                    {showLogs ? "Sembunyikan Log" : `Lihat Log (${result.logs.length})`}
-                  </button>
-                )}
-                <button
-                  onClick={() => { setResult(null); setShowLogs(false); }}
-                  className="text-(--muted) hover:text-(--text) transition-colors p-1 rounded"
-                  title="Tutup"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
+      {chatModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-sm">
+          <div className="w-full max-w-5xl h-[85vh] bg-(--bg) border border-(--border) rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex-1 overflow-hidden relative">
+              <ChatInner 
+                initialMessage={
+                  chatModal.action === "screening" 
+                    ? "Tolong lakukan screening untuk mencari pool terbaik yang bisa di-deploy saat ini." 
+                    : "Tolong lakukan management untuk memeriksa status pool dan posisi saat ini."
+                } 
+                initialRole={chatModal.action === "screening" ? "SCREENER" : "MANAGER"}
+                onClose={() => setChatModal(null)} 
+              />
             </div>
-
-            {/* Output body */}
-            <div className="px-4 py-3 max-h-[500px] overflow-y-auto">
-              {result.status === "skipped" ? (
-                <div className="flex items-start gap-3 text-sm">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400 flex-shrink-0 mt-0.5">
-                    <circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" />
-                  </svg>
-                  <div>
-                    <div className="font-medium text-yellow-300 mb-1">Job tidak dijalankan</div>
-                    <div className="text-(--muted)">{result.output}</div>
-                  </div>
-                </div>
-              ) : result.status === "error" ? (
-                <div className="text-sm text-red-300 font-mono whitespace-pre-wrap">{result.output}</div>
-              ) : (
-                <Markdown text={result.output} />
-              )}
-            </div>
-
-            {/* Inline log viewer */}
-            {showLogs && result.logs.length > 0 && (
-              <div className="border-t border-(--border) bg-black/30 max-h-[400px] overflow-y-auto">
-                <div className="font-mono text-[11px] leading-relaxed">
-                  {result.logs.map((entry, i) => {
-                    const isError = entry.category.includes("error");
-                    const isWarn = entry.category.includes("warn");
-                    const rowCls = isError
-                      ? "bg-red-500/5 text-red-300"
-                      : isWarn
-                        ? "bg-yellow-500/5 text-yellow-300"
-                        : "hover:bg-white/5 text-(--text)";
-                    return (
-                      <div key={i} className={`px-4 py-1 flex gap-3 border-b border-(--border)/30 ${rowCls}`}>
-                        <span className="text-(--muted) flex-shrink-0 w-20">
-                          {new Date(entry.ts).toLocaleTimeString()}
-                        </span>
-                        <span className={`flex-shrink-0 w-24 uppercase text-[10px] ${
-                          isError ? "text-red-400" : isWarn ? "text-yellow-400" : "text-blue-400"
-                        }`}>
-                          {entry.category}
-                        </span>
-                        <span className="break-all whitespace-pre-wrap flex-1">{entry.message}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
-        );
-      })()}
+        </div>
+      )}
     </div>
   );
 }
