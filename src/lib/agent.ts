@@ -63,12 +63,64 @@ const SCREENER_TOOLS = new Set([
   "list_blocked_deployers",
 ]);
 
+let _consecutiveTransientProviderErrors = 0;
+let _providerCircuitOpenUntil = 0;
+const PROVIDER_CB_THRESHOLD = 4;
+const PROVIDER_CB_COOLDOWN_MS = 2 * 60_000;
+
 function getToolsForRole(agentType: string) {
   if (agentType === "MANAGER")
     return tools.filter((t) => MANAGER_TOOLS.has(t.function.name));
   if (agentType === "SCREENER")
     return tools.filter((t) => SCREENER_TOOLS.has(t.function.name));
   return [...tools];
+}
+
+function extractProviderError(err: any): {
+  status?: number;
+  code?: string;
+  message: string;
+  providerMessage?: string;
+  body?: string;
+} {
+  const status = err?.status ?? err?.response?.status;
+  const code = err?.code ?? err?.response?.data?.error?.code;
+  const message = err?.message ?? "Unknown error";
+
+  const providerMessage =
+    err?.response?.data?.error?.message ||
+    err?.response?.data?.message ||
+    err?.error?.message ||
+    undefined;
+
+  let body: string | undefined;
+  const rawBody = err?.response?.data ?? err?.body;
+  if (rawBody != null) {
+    try {
+      body = typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody);
+      if (body.length > 600) body = body.slice(0, 600) + "...";
+    } catch {
+      body = undefined;
+    }
+  }
+
+  return { status, code, message, providerMessage, body };
+}
+
+function isTransientProviderError(err: any): boolean {
+  const status = err?.status ?? err?.response?.status;
+  const msg = String(err?.message ?? "").toLowerCase();
+  return (
+    status === 429 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    msg.includes("temporarily unavailable") ||
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("econnreset") ||
+    msg.includes("fetch failed")
+  );
 }
 
 export async function agentLoop(
@@ -79,6 +131,18 @@ export async function agentLoop(
   model: string | null = null,
   maxOutputTokens: number | null = null,
 ): Promise<{ content: string; userMessage: string }> {
+  if (Date.now() < _providerCircuitOpenUntil) {
+    const waitSec = Math.ceil((_providerCircuitOpenUntil - Date.now()) / 1000);
+    log(
+      "llm_warn",
+      `Circuit breaker OPEN — skipping agent loop for ${waitSec}s due to repeated transient provider failures`,
+    );
+    return {
+      content: `Provider LLM sedang tidak stabil. Circuit breaker aktif, coba lagi dalam ${waitSec} detik.`,
+      userMessage: goal,
+    };
+  }
+
   const client = await createLLMClient();
   const DEFAULT_MODEL = await getDefaultModel();
   const [portfolio, positions] = await Promise.all([
@@ -135,16 +199,47 @@ export async function agentLoop(
       let usedModel = activeModel;
 
       for (let attempt = 0; attempt < 3; attempt++) {
-        response = await client.chat({
-          model: usedModel,
-          messages: messages as any,
-          tools: getToolsForRole(agentType) as any,
-          stream: false,
-          options: {
-            temperature: config.llm.temperature,
-            num_predict: maxOutputTokens ?? config.llm.maxTokens,
-          },
-        });
+        try {
+          response = await client.chat({
+            model: usedModel,
+            messages: messages as any,
+            tools: getToolsForRole(agentType) as any,
+            stream: false,
+            options: {
+              temperature: config.llm.temperature,
+              num_predict: maxOutputTokens ?? config.llm.maxTokens,
+            },
+          });
+        } catch (chatErr: any) {
+          const detail = extractProviderError(chatErr);
+          const detailParts = [
+            `step=${step + 1}`,
+            `attempt=${attempt + 1}/3`,
+            `model=${usedModel}`,
+            detail.status != null ? `status=${detail.status}` : null,
+            detail.code ? `code=${detail.code}` : null,
+            `msg=${detail.message}`,
+            detail.providerMessage
+              ? `provider_msg=${detail.providerMessage}`
+              : null,
+            detail.body ? `body=${detail.body}` : null,
+          ].filter(Boolean);
+          log("llm_error", `Provider call failed: ${detailParts.join(" | ")}`);
+
+          if (isTransientProviderError(chatErr) && attempt < 2) {
+            if (attempt === 1 && usedModel !== FALLBACK_MODEL) {
+              usedModel = FALLBACK_MODEL;
+              log("agent", `Switching to fallback model ${FALLBACK_MODEL}`);
+            }
+            const backoff =
+              (attempt + 1) * 5000 + Math.floor(Math.random() * 1000);
+            await new Promise((r) => setTimeout(r, backoff));
+            continue;
+          }
+
+          throw chatErr;
+        }
+
         if (response?.message) break;
         if (attempt === 1 && usedModel !== FALLBACK_MODEL) {
           usedModel = FALLBACK_MODEL;
@@ -155,6 +250,8 @@ export async function agentLoop(
       }
 
       if (!response?.message) throw new Error("LLM returned empty response");
+      _consecutiveTransientProviderErrors = 0;
+
       const msg = response.message;
       messages.push(msg);
 
@@ -221,9 +318,39 @@ export async function agentLoop(
         };
       }
     } catch (error: any) {
-      log("error", `Agent loop error at step ${step}: ${error.message}`);
-      if (error.status === 429) {
-        await new Promise((r) => setTimeout(r, 30000));
+      const detail = extractProviderError(error);
+      const detailParts = [
+        `step=${step + 1}`,
+        detail.status != null ? `status=${detail.status}` : null,
+        detail.code ? `code=${detail.code}` : null,
+        `msg=${detail.message}`,
+        detail.providerMessage
+          ? `provider_msg=${detail.providerMessage}`
+          : null,
+      ].filter(Boolean);
+      log("error", `Agent loop error: ${detailParts.join(" | ")}`);
+
+      if (isTransientProviderError(error)) {
+        _consecutiveTransientProviderErrors += 1;
+        if (_consecutiveTransientProviderErrors >= PROVIDER_CB_THRESHOLD) {
+          _providerCircuitOpenUntil = Date.now() + PROVIDER_CB_COOLDOWN_MS;
+          log(
+            "llm_warn",
+            `Circuit breaker OPEN for ${Math.round(PROVIDER_CB_COOLDOWN_MS / 1000)}s after ${_consecutiveTransientProviderErrors} transient provider errors`,
+          );
+          return {
+            content:
+              "Provider LLM sedang tidak stabil. Siklus dihentikan sementara oleh circuit breaker untuk mencegah spam retry.",
+            userMessage: goal,
+          };
+        }
+
+        const waitMs = detail.status === 429 ? 30000 : 10000;
+        log(
+          "agent",
+          `Transient provider error detected, retrying step ${step + 1} after ${waitMs}ms`,
+        );
+        await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
       throw error;
