@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Markdown } from "@/components/Markdown";
 import { PendingDecisions } from "@/components/PendingDecisions";
-import { ChatInner } from "./chat/page";
+import { ChatInner } from "@/components/ChatInner";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
